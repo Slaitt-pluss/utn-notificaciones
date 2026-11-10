@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>UTN - Panel Alumno</title>
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+    <div class="dashboard-container" style="max-width: 1000px;">
+        <div class="card header-flex">
+            <div>
+                <h2>Portal de Alumnos</h2>
+                <p id="welcomeStudent">Hola, Estudiante</p>
+            </div>
+            <button class="btn btn-danger" onclick="logout()">Cerrar Sesión</button>
+        </div>
+
+        <!-- Notificaciones en Tiempo Real -->
+        <div class="card">
+            <h3>Notificaciones de Profesores en Tiempo Real</h3>
+            <p>Aquí verás cuando tu profesor marque su llegada al salón:</p>
+            <div id="notificationsList" style="margin-top: 1rem;">
+                <p style="color: #64748b;">Cargando avisos recientes...</p>
+            </div>
+        </div>
+
+        <!-- Horario Académico del Grupo -->
+        <div class="card" style="margin-top: 1.5rem;">
+            <h3>Mi Horario Académico (<span id="studentGroupTitle"></span>)</h3>
+            <div style="overflow-x: auto; margin-top: 1rem;">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Día</th>
+                            <th>Horario</th>
+                            <th>Asignatura</th>
+                            <th>Docente Asignado</th>
+                        </tr>
+                    </thead>
+                    <tbody id="studentScheduleBody">
+                        <tr><td colspan="4" style="text-align: center; color: #94a3b8;">Cargando horario del grupo...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const studentName = sessionStorage.getItem('userName') || 'Alumno';
+        const userGroup = sessionStorage.getItem('userGroup') || '4IV1';
+
+        document.getElementById('welcomeStudent').textContent = `Estudiante: ${studentName} (Grupo: ${userGroup})`;
+        document.getElementById('studentGroupTitle').textContent = userGroup;
+
+        function logout() { sessionStorage.clear(); window.location.href = 'index.html'; }
+
+        // Cargar notificaciones de los profesores
+        async function loadNotifications() {
+            try {
+                const res = await fetch('/api/notifications');
+                const data = await res.json();
+                const container = document.getElementById('notificationsList');
+                
+                if(data.notifications && data.notifications.length > 0) {
+                    container.innerHTML = data.notifications.map(n => `
+                        <div style="background: rgba(15, 23, 42, 0.6); padding: 1rem; border-radius: 8px; margin-bottom: 0.75rem; border-left: 4px solid #38bdf8;">
+                            <strong>👨‍🏫 Prof. ${n.teacherName}</strong> — <em>Salón: ${n.classroom}</em>
+                            <p style="margin-top: 0.3rem; color: #f8fafc;">${n.message || 'Sin mensaje adicional'}</p>
+                            <small style="color: #64748b; display: block; margin-top: 0.4rem;">Registrado a las: ${n.timestamp}</small>
+                        </div>
+                    `).join('');
+                } else {
+                    container.innerHTML = '<p>No hay notificaciones de profesores registradas por el momento.</p>';
+                }
+            } catch (e) {
+                console.error("Error al cargar notificaciones:", e);
+            }
+        }
+
+        // Cargar el horario correspondiente al grupo del alumno
+        async function loadStudentSchedule() {
+            try {
+                const res = await fetch(`/api/admin/schedules/${userGroup}`);
+                const data = await res.json();
+                const tbody = document.getElementById('studentScheduleBody');
+
+                if (data.schedule && data.schedule.length > 0) {
+                    tbody.innerHTML = data.schedule.map(s => `
+                        <tr>
+                            <td><span style="padding: 0.2rem 0.5rem; background: rgba(56,189,248,0.2); border-radius: 4px; color: #38bdf8; font-weight: bold;">${s.day || 'N/A'}</span></td>
+                            <td><strong>${s.time}</strong></td>
+                            <td>${s.subject}</td>
+                            <td>${s.teacher}</td>
+                        </tr>
+                    `).join('');
+                } else {
+                    tbody.innerHTML = `<tr><td colspan="4" style="text-align: center; color: #94a3b8;">No hay horario configurado para este grupo aún.</td></tr>`;
+                }
+            } catch (e) {
+                console.error("Error al cargar horario del alumno:", e);
+            }
+        }
+
+        loadNotifications();
+        loadStudentSchedule();
+        
+        // Actualizar notificaciones cada 5 segundos en tiempo real
+        setInterval(loadNotifications, 5000);
+    </script>
+</body>
+</html>
