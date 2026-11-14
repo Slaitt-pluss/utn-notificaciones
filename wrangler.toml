@@ -1,0 +1,7 @@
+name = "utn-notificaciones"
+compatibility_date = "2026-11-14"
+pages_build_output_dir = "public"
+
+[[kv_namespaces]]
+binding = "UTN_KV"
+id = "aeee978e66614b45bd80b852b993f812"
