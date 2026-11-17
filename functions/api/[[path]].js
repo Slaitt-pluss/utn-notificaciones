@@ -6,12 +6,18 @@ const enc = encodeURIComponent;
 
 async function sb(env, pathAndQuery, { method = 'GET', body, prefer } = {}) {
   const key = env.SUPABASE_SERVICE_KEY;
+  if (!key || !env.SUPABASE_URL) {
+    throw new Error(
+      'Faltan variables. El Worker solo recibe estas: ' + Object.keys(env).join(', ')
+    );
+  }
   const headers = { apikey: key, 'Content-Type': 'application/json' };
   // Las llaves JWT clasicas (eyJ...) tambien van en Authorization; las nuevas sb_secret_... no
   if (key.startsWith('eyJ')) headers.Authorization = `Bearer ${key}`;
   if (prefer) headers.Prefer = prefer;
 
-  const res = await fetch(`${env.SUPABASE_URL}/rest/v1/${pathAndQuery}`, {
+  const base = env.SUPABASE_URL.trim().replace(/\/rest\/v1\/?$/, '').replace(/\/+$/, '');
+  const res = await fetch(`${base}/rest/v1/${pathAndQuery}`, {
     method,
     headers,
     body: body !== undefined ? JSON.stringify(body) : undefined
