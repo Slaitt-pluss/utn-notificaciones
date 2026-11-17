@@ -1,5 +1,5 @@
 {
-  "name": "NOMBRE-DE-TU-PROYECTO",
+  "name": "utn-notificaciones",
   "main": "functions/api/[[path]].js",
   "compatibility_date": "2025-01-01",
   "assets": {
