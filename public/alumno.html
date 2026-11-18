@@ -162,7 +162,19 @@
             btnElement.classList.add('active');
         }
 
-        function logout() { sessionStorage.clear(); window.location.href = 'index.html'; }
+        // Si el servidor responde 401 (sesión vencida o inexistente), regresa al inicio
+        const _fetch = window.fetch.bind(window);
+        window.fetch = async (...args) => {
+            const res = await _fetch(...args);
+            if (res.status === 401) { sessionStorage.clear(); window.location.href = 'index.html'; }
+            return res;
+        };
+
+        async function logout() {
+            try { await fetch('/api/logout', { method: 'POST' }); } catch (e) {}
+            sessionStorage.clear();
+            window.location.href = 'index.html';
+        }
 
         // --- HISTORIAL (se guarda en este navegador, por alumno) ---
         function loadHistory() {
