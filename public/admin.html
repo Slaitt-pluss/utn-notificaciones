@@ -1,212 +1,668 @@
-// Backend para Cloudflare conectado a Supabase (usa la API REST de Supabase con fetch,
-// asi no depende de ningun paquete npm).
-// Variables de entorno necesarias en Cloudflare: SUPABASE_URL y SUPABASE_SERVICE_KEY
-
-const enc = encodeURIComponent;
-
-async function sb(env, pathAndQuery, { method = 'GET', body, prefer } = {}) {
-  const key = env.SUPABASE_SERVICE_KEY;
-  if (!key || !env.SUPABASE_URL) {
-    throw new Error(
-      'Faltan variables. El Worker solo recibe estas: ' + Object.keys(env).join(', ')
-    );
-  }
-  const headers = { apikey: key, 'Content-Type': 'application/json' };
-  // Las llaves JWT clasicas (eyJ...) tambien van en Authorization; las nuevas sb_secret_... no
-  if (key.startsWith('eyJ')) headers.Authorization = `Bearer ${key}`;
-  if (prefer) headers.Prefer = prefer;
-
-  const base = env.SUPABASE_URL.trim().replace(/\/rest\/v1\/?$/, '').replace(/\/+$/, '');
-  const res = await fetch(`${base}/rest/v1/${pathAndQuery}`, {
-    method,
-    headers,
-    body: body !== undefined ? JSON.stringify(body) : undefined
-  });
-  const text = await res.text();
-  if (!res.ok) throw new Error(`Supabase ${res.status}: ${text}`);
-  return text ? JSON.parse(text) : null;
-}
-
-// Fila de la tabla users -> formato que ya usaba tu frontend
-function formatUser(u) {
-  return {
-    ...(u.extra || {}),
-    id: u.id,
-    username: u.username,
-    password: u.password,
-    name: u.name,
-    nombre: u.nombre,
-    appPaterno: u.app_paterno,
-    role: u.role,
-    grupo: u.grupo
-  };
-}
-
-function formatNotification(n) {
-  return {
-    id: n.id,
-    teacherName: n.teacher_name,
-    classroom: n.classroom,
-    message: n.message,
-    timestamp: new Date(n.created_at).toLocaleTimeString('es-MX', {
-      timeZone: 'America/Mexico_City'
-    })
-  };
-}
-
-// Devuelve una Response para rutas /api/*, o null si la ruta no es de la API
-async function handle(request, env) {
-  const url = new URL(request.url);
-  const path = url.pathname.replace(/\/+$/, '');
-  const method = request.method;
-
-  if (!path.startsWith('/api/')) return null;
-
-  const jsonRes = (data, status = 200) =>
-    new Response(JSON.stringify(data), {
-      status,
-      headers: { 'Content-Type': 'application/json;charset=UTF-8' }
-    });
-
-  try {
-    // 1. Login
-    if (path === '/api/login' && method === 'POST') {
-      const { username, password } = await request.json();
-      const rows = await sb(
-        env,
-        `users?select=*&username=eq.${enc(username || '')}&password=eq.${enc(password || '')}&limit=1`
-      );
-      const user = rows[0];
-
-      if (user) {
-        return jsonRes({
-          success: true,
-          user: {
-            name: user.name || `${user.nombre || ''} ${user.app_paterno || ''}`.trim(),
-            role: user.role,
-            grupo: user.grupo || 'N/A'
-          }
-        });
-      }
-      return jsonRes({ success: false, message: 'Usuario o contraseña incorrectos' }, 401);
-    }
-
-    // 2. Lista de usuarios (Admin)
-    if (path === '/api/admin/users' && method === 'GET') {
-      const rows = await sb(env, 'users?select=*&order=id');
-      return jsonRes({ users: rows.map(formatUser) });
-    }
-
-    // 3. Agregar usuario (Admin)
-    if (path === '/api/admin/users' && method === 'POST') {
-      const { username, password, name, nombre, appPaterno, role, grupo, id, ...extra } =
-        await request.json();
-
-      const rows = await sb(env, 'users', {
-        method: 'POST',
-        prefer: 'return=representation',
-        body: { username, password, name, nombre, app_paterno: appPaterno, role, grupo, extra }
-      });
-      return jsonRes({ success: true, user: formatUser(rows[0]) });
-    }
-
-    // 4. Eliminar usuario (Admin)
-    if (path.startsWith('/api/admin/users/') && method === 'DELETE') {
-      const userId = Number(path.split('/').pop());
-      await sb(env, `users?id=eq.${userId}`, { method: 'DELETE' });
-      return jsonRes({ success: true });
-    }
-
-    // 5. Obtener grupos (con sus materias)
-    if (path === '/api/admin/groups' && method === 'GET') {
-      const rows = await sb(env, 'groups?select=name,subjects&order=name');
-      const groups = {};
-      rows.forEach(g => { groups[g.name] = { subjects: g.subjects || [] }; });
-      return jsonRes({ groups });
-    }
-
-    // 6. Guardar grupos y materias (reemplaza la lista completa)
-    if (path === '/api/admin/groups' && method === 'POST') {
-      const body = await request.json();
-      let groups = body.groups || {};
-
-      // Compatibilidad: si llega una lista simple, la convierte al formato nuevo
-      if (Array.isArray(groups)) {
-        const obj = {};
-        groups.forEach(n => { obj[n] = { subjects: [] }; });
-        groups = obj;
-      }
-
-      const names = Object.keys(groups);
-      const existing = await sb(env, 'groups?select=name');
-      for (const g of existing) {
-        if (!names.includes(g.name)) {
-          await sb(env, `groups?name=eq.${enc(g.name)}`, { method: 'DELETE' });
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>UTN - Panel Administrativo</title>
+    <link rel="stylesheet" href="css/style.css">
+    <style>
+        .admin-nav {
+            display: flex;
+            gap: 0.75rem;
+            margin-bottom: 1.5rem;
+            flex-wrap: wrap;
         }
-      }
-      if (names.length) {
-        await sb(env, 'groups?on_conflict=name', {
-          method: 'POST',
-          prefer: 'resolution=merge-duplicates',
-          body: names.map(name => ({ name, subjects: groups[name].subjects || [] }))
+        .tab-btn {
+            background: rgba(15, 23, 42, 0.6);
+            border: 1px solid #334155;
+            color: #94a3b8;
+            padding: 0.75rem 1.25rem;
+            border-radius: 8px;
+            cursor: pointer;
+            font-weight: 600;
+            transition: all 0.3s ease;
+        }
+        .tab-btn:hover {
+            background: rgba(56, 189, 248, 0.1);
+            color: #38bdf8;
+            border-color: rgba(56, 189, 248, 0.3);
+        }
+        .tab-btn.active {
+            background: linear-gradient(135deg, #0284c7 0%, #0369a1 100%);
+            color: #fff;
+            border-color: #38bdf8;
+            box-shadow: 0 4px 12px rgba(56, 189, 248, 0.2);
+        }
+        .tab-content {
+            display: none;
+        }
+        .tab-content.active {
+            display: block;
+        }
+    </style>
+</head>
+<body>
+    <div class="dashboard-container" style="max-width: 1100px;">
+        <div class="card header-flex">
+            <div>
+                <h2>Panel de Administración</h2>
+                <p>Gestión integral de usuarios, cuentas y asignación de grupos UTN</p>
+            </div>
+            <button class="btn btn-danger" onclick="logout()">Cerrar Sesión</button>
+        </div>
+
+        <!-- Botones de Pestañas / Apartados -->
+        <div class="admin-nav">
+            <button class="tab-btn active" onclick="switchTab('usersTab', this)">👥 Gestión de Usuarios</button>
+            <button class="tab-btn" onclick="switchTab('groupsTab', this)">📚 Grupos y Materias</button>
+            <button class="tab-btn" onclick="switchTab('schedulesTab', this)">⏰ Horarios Académicos</button>
+        </div>
+
+        <!-- ================= APARTADO 1: GESTIÓN DE USUARIOS ================= -->
+        <div id="usersTab" class="tab-content active">
+            <div class="card">
+                <h3 id="formTitle">Registrar Nuevo Usuario / Alumno / Docente</h3>
+                <form id="adminUserForm">
+                    <input type="hidden" id="editUserId">
+                    <div class="form-grid">
+                        <div class="input-group">
+                            <label>Nombre(s)</label>
+                            <input type="text" id="nombre" required placeholder="Ej. Juan">
+                        </div>
+                        <div class="input-group">
+                            <label>Apellido Paterno</label>
+                            <input type="text" id="appPaterno" required placeholder="Ej. Pérez">
+                        </div>
+                        <div class="input-group">
+                            <label>Apellido Materno</label>
+                            <input type="text" id="appMaterno" required placeholder="Ej. Gómez">
+                        </div>
+                        <div class="input-group">
+                            <label>Rol</label>
+                            <select id="role" required>
+                                <option value="alumno">Alumno</option>
+                                <option value="docente">Docente</option>
+                                <option value="admin">Administrador</option>
+                            </select>
+                        </div>
+                        <div class="input-group">
+                            <label>Grupo</label>
+                            <select id="grupo">
+                                <!-- Se llena dinámicamente -->
+                            </select>
+                        </div>
+                        <div class="input-group">
+                            <label>Turno</label>
+                            <select id="turno">
+                                <option value="Matutino">Matutino</option>
+                                <option value="Vespertino">Vespertino</option>
+                            </select>
+                        </div>
+                        <div class="input-group">
+                            <label>Usuario (Login)</label>
+                            <input type="text" id="username" required placeholder="jperez">
+                        </div>
+                        <div class="input-group">
+                            <label>Contraseña</label>
+                            <input type="text" id="password" required placeholder="Contraseña visible">
+                        </div>
+                    </div>
+                    <div style="display: flex; gap: 1rem; margin-top: 1rem;">
+                        <button type="submit" class="btn" id="saveBtn">Guardar Usuario</button>
+                        <button type="button" class="btn btn-danger" id="cancelEditBtn" style="display:none;" onclick="resetForm()">Cancelar Edición</button>
+                    </div>
+                </form>
+            </div>
+
+            <div class="card" style="margin-top: 1.5rem;">
+                <h3>Usuarios Registrados en el Sistema (Consulta y Recuperación)</h3>
+                <div style="overflow-x: auto; margin-top: 1rem;">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Nombre Completo</th>
+                                <th>Usuario</th>
+                                <th>Contraseña</th>
+                                <th>Rol</th>
+                                <th>Grupo</th>
+                                <th>Turno</th>
+                                <th>Acciones</th>
+                            </tr>
+                        </thead>
+                        <tbody id="usersTableBody">
+                            <tr><td colspan="7" style="text-align: center; color: #94a3b8;">Cargando usuarios...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- ================= APARTADO 2: GRUPOS Y MATERIAS ================= -->
+        <div id="groupsTab" class="tab-content">
+            <div class="card">
+                <h3>Gestión de Grupos Académicos y sus Materias</h3>
+                <p style="color: #94a3b8; margin-bottom: 1rem;">Agrega grupos y define qué materias corresponden a cada uno:</p>
+                <div style="display: flex; gap: 1rem; margin-bottom: 1.5rem;">
+                    <input type="text" id="newGroupInput" placeholder="Ej. 4IV3" style="flex: 1;">
+                    <button class="btn" onclick="addGroup()">Agregar Grupo</button>
+                </div>
+                <div id="groupsList">
+                    <!-- Los grupos y sus catálogos de materias se cargan dinámicamente -->
+                </div>
+            </div>
+        </div>
+
+        <!-- ================= APARTADO 3: HORARIOS ACADÉMICOS ================= -->
+        <div id="schedulesTab" class="tab-content">
+            <div class="card">
+                <h3>Gestión de Horarios Académicos por Grupo</h3>
+                <div class="form-grid" style="margin-bottom: 1rem;">
+                    <div class="input-group">
+                        <label>Seleccionar Grupo a Configurar</label>
+                        <select id="scheduleGroupSelect" onchange="loadGroupSchedule()">
+                            <!-- Se llena dinámicamente -->
+                        </select>
+                    </div>
+                </div>
+
+                <!-- Contenedor del Editor -->
+                <div id="scheduleEditorContainer">
+                    <p style="color: #94a3b8; margin-bottom: 1rem;">Configura las materias (del catálogo del grupo), días, horas y profesores:</p>
+                    <div id="scheduleRows">
+                        <!-- Filas dinámicas de horario -->
+                    </div>
+                    <div style="display: flex; gap: 1rem; margin-top: 1rem; flex-wrap: wrap;">
+                        <button class="btn" onclick="addScheduleRow()" style="background: #334155;">+ Agregar Fila al Horario</button>
+                        <button class="btn" onclick="saveGroupSchedule()" style="background: #059669;">Guardar Cambios</button>
+                        <button class="btn btn-danger" onclick="toggleSchedulePreview(true)">Ver Vista Previa</button>
+                    </div>
+                </div>
+
+                <!-- Contenedor de la Vista Previa -->
+                <div id="schedulePreviewContainer" style="display: none; margin-top: 1rem;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+                        <h4 style="color: #38bdf8;">👁️ Vista Previa del Horario (<span id="previewGroupName"></span>)</h4>
+                        <button class="btn" onclick="toggleSchedulePreview(false)">✏️ Editar Horario</button>
+                    </div>
+                    <div style="overflow-x: auto;">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>Día</th>
+                                    <th>Horario</th>
+                                    <th>Asignatura</th>
+                                    <th>Docente Asignado</th>
+                                </tr>
+                            </thead>
+                            <tbody id="previewScheduleBody">
+                                <!-- Se renderiza la tabla previa -->
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+    </div>
+
+    <script>
+        function switchTab(tabId, btnElement) {
+            document.querySelectorAll('.tab-content').forEach(tab => tab.classList.remove('active'));
+            document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
+
+            document.getElementById(tabId).classList.add('active');
+            btnElement.classList.add('active');
+        }
+
+        function logout() { sessionStorage.clear(); window.location.href = 'index.html'; }
+
+        let allUsers = [];
+        let allTeachers = [];
+        let groupsData = {}; // Estructura: { "4IV1": { subjects: ["Matemáticas", "Redes"] } }
+        let currentGroupSchedule = [];
+
+        async function loadData() {
+            await loadGroups();
+            await loadUsers();
+        }
+
+        async function loadGroups() {
+            try {
+                const res = await fetch('/api/admin/groups');
+                const data = await res.json();
+                
+                // Soporte para formato antiguo (array de strings) o nuevo (objeto con materias)
+                if (Array.isArray(data.groups)) {
+                    groupsData = {};
+                    data.groups.forEach(g => { groupsData[g] = { subjects: [] }; });
+                } else {
+                    groupsData = data.groups || {};
+                }
+
+                renderGroups();
+                updateGroupDropdown();
+                updateScheduleGroupDropdown();
+            } catch (e) {
+                console.error("Error al cargar grupos:", e);
+            }
+        }
+
+        async function saveGroupsToServer() {
+            await fetch('/api/admin/groups', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ groups: groupsData })
+            });
+        }
+
+        async function loadUsers() {
+            try {
+                const res = await fetch('/api/admin/users');
+                const data = await res.json();
+                allUsers = data.users || [];
+                allTeachers = allUsers.filter(u => u.role === 'docente');
+                renderUsers();
+                loadGroupSchedule();
+            } catch (e) {
+                console.error("Error al cargar usuarios:", e);
+                document.getElementById('usersTableBody').innerHTML = `<tr><td colspan="7" style="text-align: center; color: #f43f5e;">Error al conectar con el servidor.</td></tr>`;
+            }
+        }
+
+        function renderUsers() {
+            const tbody = document.getElementById('usersTableBody');
+            if (allUsers.length === 0) {
+                tbody.innerHTML = `<tr><td colspan="7" style="text-align: center; color: #94a3b8;">No hay usuarios registrados.</td></tr>`;
+                return;
+            }
+
+            tbody.innerHTML = allUsers.map(u => `
+                <tr>
+                    <td>${u.name || (u.nombre + ' ' + u.appPaterno)}</td>
+                    <td><code>${u.username}</code></td>
+                    <td><code style="color: #38bdf8; background: rgba(56,189,248,0.1); padding: 0.2rem 0.4rem; border-radius: 4px;">${u.password}</code></td>
+                    <td><span style="padding: 0.2rem 0.5rem; background: rgba(56,189,248,0.2); border-radius: 4px; color: #38bdf8; font-size: 0.8rem; text-transform: uppercase;">${u.role}</span></td>
+                    <td>${u.grupo || 'N/A'}</td>
+                    <td>${u.turno || 'N/A'}</td>
+                    <td>
+                        <button class="btn" style="padding: 0.4rem 0.8rem; font-size: 0.8rem; margin-right: 0.4rem;" onclick="editUser(${u.id})">Editar / Ver</button>
+                        <button class="btn btn-danger" style="padding: 0.4rem 0.8rem; font-size: 0.8rem;" onclick="deleteUser(${u.id})">Borrar</button>
+                    </td>
+                </tr>
+            `).join('');
+        }
+
+        function updateGroupDropdown() {
+            const select = document.getElementById('grupo');
+            if (!select) return;
+            const groupNames = Object.keys(groupsData);
+            select.innerHTML = groupNames.map(g => `<option value="${g}">${g}</option>`).join('');
+        }
+
+        function updateScheduleGroupDropdown() {
+            const select = document.getElementById('scheduleGroupSelect');
+            if (!select) return;
+            const groupNames = Object.keys(groupsData);
+            select.innerHTML = groupNames.map(g => `<option value="${g}">${g}</option>`).join('');
+            loadGroupSchedule();
+        }
+
+        // Control de Rol en formulario de usuario
+        document.getElementById('role').addEventListener('change', (e) => {
+            const selectedRole = e.target.value;
+            const grupoSelect = document.getElementById('grupo');
+
+            if (selectedRole === 'docente' || selectedRole === 'admin') {
+                grupoSelect.value = '';
+                grupoSelect.disabled = true;
+                grupoSelect.style.opacity = '0.5';
+            } else {
+                grupoSelect.disabled = false;
+                grupoSelect.style.opacity = '1';
+            }
         });
-      }
-      return jsonRes({ success: true });
-    }
 
-    // 7. Horario de un grupo
-    if (path.startsWith('/api/admin/schedules/') && method === 'GET') {
-      const groupName = decodeURIComponent(path.split('/').pop());
-      const rows = await sb(env, `schedules?select=schedule&group_name=eq.${enc(groupName)}&limit=1`);
-      return jsonRes({ schedule: rows[0]?.schedule || [] });
-    }
+        // --- GESTIÓN DE GRUPOS Y MATERIAS ---
+        function renderGroups() {
+            const container = document.getElementById('groupsList');
+            const groupNames = Object.keys(groupsData);
 
-    // 8. Guardar horario de un grupo
-    if (path === '/api/admin/schedules' && method === 'POST') {
-      const { group, schedule } = await request.json();
-      await sb(env, 'schedules?on_conflict=group_name', {
-        method: 'POST',
-        prefer: 'resolution=merge-duplicates',
-        body: { group_name: group, schedule: schedule || [] }
-      });
-      return jsonRes({ success: true });
-    }
+            if (groupNames.length === 0) {
+                container.innerHTML = `<p style="color: #94a3b8;">No hay grupos registrados.</p>`;
+                return;
+            }
 
-    // 9. Obtener notificaciones
-    if (path === '/api/notifications' && method === 'GET') {
-      const rows = await sb(env, 'notifications?select=*&order=created_at.desc&limit=100');
-      return jsonRes({ notifications: rows.map(formatNotification) });
-    }
+            container.innerHTML = groupNames.map(g => {
+                const subjects = groupsData[g].subjects || [];
+                return `
+                    <div style="background: rgba(15, 23, 42, 0.6); border: 1px solid #334155; padding: 1rem; border-radius: 8px; margin-bottom: 1rem;">
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem;">
+                            <h4 style="color: #38bdf8; margin: 0;">📚 Grupo: ${g}</h4>
+                            <button class="btn btn-danger" onclick="removeGroup('${g}')" style="padding: 0.3rem 0.6rem; font-size: 0.8rem;">Eliminar Grupo</button>
+                        </div>
+                        <div style="margin-bottom: 0.75rem;">
+                            <strong style="font-size: 0.9rem; color: #94a3b8;">Materias de este grupo:</strong>
+                            <div style="display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.5rem;">
+                                ${subjects.length > 0 ? subjects.map(sub => `
+                                    <span style="background: rgba(56, 189, 248, 0.1); border: 1px solid rgba(56, 189, 248, 0.3); padding: 0.2rem 0.6rem; border-radius: 6px; font-size: 0.85rem; display: flex; align-items: center; gap: 0.4rem;">
+                                        ${sub} <span onclick="removeSubjectFromGroup('${g}', '${sub}')" style="cursor:pointer; color:#f43f5e; font-weight:bold;">&times;</span>
+                                    </span>
+                                `).join('') : '<em style="font-size: 0.85rem; color: #64748b;">Sin materias registradas aún.</em>'}
+                            </div>
+                        </div>
+                        <div style="display: flex; gap: 0.5rem;">
+                            <input type="text" id="subInput_${g}" placeholder="Nombre de la materia (Ej. Redes II)" style="flex: 1; padding: 0.4rem; font-size: 0.9rem;">
+                            <button class="btn" onclick="addSubjectToGroup('${g}')" style="padding: 0.4rem 0.8rem; font-size: 0.9rem;">+ Agregar Materia</button>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        }
 
-    // 10. Enviar notificacion (Docentes)
-    if (path === '/api/notifications' && method === 'POST') {
-      const { teacherName, classroom, message } = await request.json();
-      const rows = await sb(env, 'notifications', {
-        method: 'POST',
-        prefer: 'return=representation',
-        body: { teacher_name: teacherName, classroom, message }
-      });
-      return jsonRes({ success: true, notification: formatNotification(rows[0]) });
-    }
+        async function addGroup() {
+            const input = document.getElementById('newGroupInput');
+            const val = input.value.trim().toUpperCase();
+            if (val && !groupsData[val]) {
+                groupsData[val] = { subjects: [] };
+                input.value = '';
+                renderGroups();
+                updateGroupDropdown();
+                updateScheduleGroupDropdown();
+                await saveGroupsToServer();
+            }
+        }
 
-    return jsonRes({ success: false, message: 'Ruta no encontrada' }, 404);
-  } catch (err) {
-    console.error(err);
-    return jsonRes({ success: false, message: 'Error interno en el servidor', error: err.message }, 500);
-  }
-}
+        async function removeGroup(groupName) {
+            if (confirm(`¿Estás seguro de eliminar el grupo ${groupName}?`)) {
+                delete groupsData[groupName];
+                renderGroups();
+                updateGroupDropdown();
+                updateScheduleGroupDropdown();
+                await saveGroupsToServer();
+            }
+        }
 
-// Cloudflare Pages Functions
-export async function onRequest(context) {
-  const res = await handle(context.request, context.env);
-  return res || context.next();
-}
+        async function addSubjectToGroup(groupName) {
+            const input = document.getElementById(`subInput_${groupName}`);
+            const subjectName = input.value.trim();
+            if (subjectName) {
+                if (!groupsData[groupName].subjects.includes(subjectName)) {
+                    groupsData[groupName].subjects.push(subjectName);
+                    input.value = '';
+                    renderGroups();
+                    await saveGroupsToServer();
+                    // Actualizamos filas de horarios si este grupo está seleccionado actualmente
+                    if (document.getElementById('scheduleGroupSelect').value === groupName) {
+                        loadGroupSchedule();
+                    }
+                }
+            }
+        }
 
-// Cloudflare Workers (por si lo desplegaste como Worker)
-export default {
-  async fetch(request, env) {
-    const res = await handle(request, env);
-    if (res) return res;
-    return env.ASSETS ? env.ASSETS.fetch(request) : new Response('Recurso no encontrado', { status: 404 });
-  }
-};
+        async function removeSubjectFromGroup(groupName, subjectName) {
+            groupsData[groupName].subjects = groupsData[groupName].subjects.filter(s => s !== subjectName);
+            renderGroups();
+            await saveGroupsToServer();
+            if (document.getElementById('scheduleGroupSelect').value === groupName) {
+                loadGroupSchedule();
+            }
+        }
+
+        // --- GESTIÓN DE HORARIOS Y VISTA PREVIA ---
+        async function loadGroupSchedule() {
+            const group = document.getElementById('scheduleGroupSelect').value;
+            if (!group) return;
+
+            try {
+                const res = await fetch(`/api/admin/schedules/${group}`);
+                const data = await res.json();
+                currentGroupSchedule = data.schedule || [];
+                renderScheduleRows(currentGroupSchedule);
+                updateSchedulePreviewDOM();
+            } catch (e) {
+                console.error("Error al cargar horario", e);
+            }
+        }
+
+        function renderScheduleRows(schedule) {
+            const container = document.getElementById('scheduleRows');
+            const days = ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'];
+            const currentGroup = document.getElementById('scheduleGroupSelect').value;
+            const groupSubjects = (groupsData[currentGroup] && groupsData[currentGroup].subjects) ? groupsData[currentGroup].subjects : [];
+
+            container.innerHTML = schedule.map((item) => `
+                <div class="form-grid schedule-row" style="margin-bottom: 0.5rem; background: rgba(15, 23, 42, 0.4); padding: 0.5rem; border-radius: 8px; align-items: center;">
+                    <select class="sch-day">
+                        ${days.map(d => `<option value="${d}" ${item.day === d ? 'selected' : ''}>${d}</option>`).join('')}
+                    </select>
+                    <input type="text" class="sch-time" placeholder="Ej. 07:00 - 08:00" value="${item.time || ''}">
+                    <select class="sch-subject">
+                        <option value="">Seleccionar Materia</option>
+                        ${groupSubjects.length > 0
+                            ? groupSubjects.map(sub => `<option value="${sub}" ${item.subject === sub ? 'selected' : ''}>${sub}</option>`).join('')
+                            : `<option value="" disabled>Agrega materias al grupo primero</option>`
+                        }
+                    </select>
+                    <select class="sch-teacher">
+                        <option value="">Seleccionar Profesor</option>
+                        ${allTeachers.length > 0 
+                            ? allTeachers.map(t => {
+                                const fullName = t.name || (t.nombre + ' ' + t.appPaterno);
+                                return `<option value="${fullName}" ${item.teacher === fullName ? 'selected' : ''}>${fullName}</option>`;
+                              }).join('')
+                            : `<option value="" disabled>No hay docentes registrados</option>`
+                        }
+                    </select>
+                    <button class="btn btn-danger" onclick="this.parentElement.remove()" style="padding: 0.5rem;">X</button>
+                </div>
+            `).join('');
+        }
+
+        function addScheduleRow() {
+            const container = document.getElementById('scheduleRows');
+            const div = document.createElement('div');
+            div.className = "form-grid schedule-row";
+            div.style.cssText = "margin-bottom: 0.5rem; background: rgba(15, 23, 42, 0.4); padding: 0.5rem; border-radius: 8px; align-items: center;";
+            
+            const days = ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'];
+            const currentGroup = document.getElementById('scheduleGroupSelect').value;
+            const groupSubjects = (groupsData[currentGroup] && groupsData[currentGroup].subjects) ? groupsData[currentGroup].subjects : [];
+
+            div.innerHTML = `
+                <select class="sch-day">
+                    ${days.map(d => `<option value="${d}">${d}</option>`).join('')}
+                </select>
+                <input type="text" class="sch-time" placeholder="Ej. 07:00 - 08:00">
+                <select class="sch-subject">
+                    <option value="">Seleccionar Materia</option>
+                    ${groupSubjects.length > 0
+                        ? groupSubjects.map(sub => `<option value="${sub}">${sub}</option>`).join('')
+                        : `<option value="" disabled>Agrega materias al grupo primero</option>`
+                    }
+                </select>
+                <select class="sch-teacher">
+                    <option value="">Seleccionar Profesor</option>
+                    ${allTeachers.length > 0 
+                        ? allTeachers.map(t => {
+                            const fullName = t.name || (t.nombre + ' ' + t.appPaterno);
+                            return `<option value="${fullName}">${fullName}</option>`;
+                          }).join('')
+                        : `<option value="" disabled>No hay docentes registrados</option>`
+                    }
+                </select>
+                <button class="btn btn-danger" onclick="this.parentElement.remove()" style="padding: 0.5rem;">X</button>
+            `;
+            container.appendChild(div);
+        }
+
+        async function saveGroupSchedule() {
+            const group = document.getElementById('scheduleGroupSelect').value;
+            const rows = document.querySelectorAll('.schedule-row');
+            const schedule = [];
+
+            rows.forEach(row => {
+                schedule.push({
+                    day: row.querySelector('.sch-day').value,
+                    time: row.querySelector('.sch-time').value,
+                    subject: row.querySelector('.sch-subject').value,
+                    teacher: row.querySelector('.sch-teacher').value
+                });
+            });
+
+            const res = await fetch('/api/admin/schedules', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ group, schedule })
+            });
+
+            const data = await res.json();
+            if (data.success) {
+                currentGroupSchedule = schedule;
+                updateSchedulePreviewDOM();
+                toggleSchedulePreview(true);
+                alert(`¡Horario del grupo ${group} guardado y actualizado con éxito!`);
+            } else {
+                alert('Error al guardar el horario.');
+            }
+        }
+
+        function updateSchedulePreviewDOM() {
+            const group = document.getElementById('scheduleGroupSelect').value;
+            document.getElementById('previewGroupName').textContent = group;
+            const tbody = document.getElementById('previewScheduleBody');
+
+            if (currentGroupSchedule.length > 0) {
+                tbody.innerHTML = currentGroupSchedule.map(s => `
+                    <tr>
+                        <td><span style="padding: 0.2rem 0.5rem; background: rgba(56,189,248,0.2); border-radius: 4px; color: #38bdf8; font-weight: bold;">${s.day || 'N/A'}</span></td>
+                        <td><strong>${s.time}</strong></td>
+                        <td>${s.subject}</td>
+                        <td>${s.teacher}</td>
+                    </tr>
+                `).join('');
+            } else {
+                tbody.innerHTML = `<tr><td colspan="4" style="text-align: center; color: #94a3b8;">No hay materias configuradas en este horario.</td></tr>`;
+            }
+        }
+
+        function toggleSchedulePreview(showPreview) {
+            const editor = document.getElementById('scheduleEditorContainer');
+            const preview = document.getElementById('schedulePreviewContainer');
+
+            if (showPreview) {
+                const rows = document.querySelectorAll('.schedule-row');
+                currentGroupSchedule = [];
+                rows.forEach(row => {
+                    currentGroupSchedule.push({
+                        day: row.querySelector('.sch-day').value,
+                        time: row.querySelector('.sch-time').value,
+                        subject: row.querySelector('.sch-subject').value,
+                        teacher: row.querySelector('.sch-teacher').value
+                    });
+                });
+                updateSchedulePreviewDOM();
+
+                editor.style.display = 'none';
+                preview.style.display = 'block';
+            } else {
+                editor.style.display = 'block';
+                preview.style.display = 'none';
+            }
+        }
+
+        // Guardar o Actualizar Usuario
+        document.getElementById('adminUserForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const editId = document.getElementById('editUserId').value;
+            const role = document.getElementById('role').value;
+            
+            const userData = {
+                nombre: document.getElementById('nombre').value,
+                appPaterno: document.getElementById('appPaterno').value,
+                appMaterno: document.getElementById('appMaterno').value,
+                name: `${document.getElementById('nombre').value} ${document.getElementById('appPaterno').value}`,
+                role: role,
+                grupo: (role === 'docente' || role === 'admin') ? 'N/A' : document.getElementById('grupo').value,
+                turno: document.getElementById('turno').value,
+                username: document.getElementById('username').value,
+                password: document.getElementById('password').value
+            };
+
+            if (editId) {
+                await fetch(`/api/admin/users/${editId}`, { method: 'DELETE' });
+            }
+
+            const res = await fetch('/api/admin/users', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(userData)
+            });
+
+            const data = await res.json();
+            if (data.success) {
+                alert(editId ? '¡Cuenta modificada con éxito!' : '¡Usuario registrado con éxito!');
+                resetForm();
+                loadUsers();
+            }
+        });
+
+        async function deleteUser(id) {
+            if (confirm('¿Estás seguro de eliminar este usuario del sistema?')) {
+                const res = await fetch(`/api/admin/users/${id}`, { method: 'DELETE' });
+                const data = await res.json();
+                if (data.success) {
+                    loadUsers();
+                }
+            }
+        }
+
+        function editUser(id) {
+            const user = allUsers.find(u => u.id === id);
+            if (!user) return;
+
+            switchTab('usersTab', document.querySelector('.admin-nav button'));
+
+            document.getElementById('editUserId').value = user.id;
+            document.getElementById('nombre').value = user.nombre || user.name.split(' ')[0] || '';
+            document.getElementById('appPaterno').value = user.appPaterno || user.name.split(' ')[1] || '';
+            document.getElementById('appMaterno').value = user.appMaterno || '';
+            
+            const roleSelect = document.getElementById('role');
+            roleSelect.value = user.role;
+
+            const grupoSelect = document.getElementById('grupo');
+            if (user.role === 'docente' || user.role === 'admin') {
+                grupoSelect.value = '';
+                grupoSelect.disabled = true;
+                grupoSelect.style.opacity = '0.5';
+            } else {
+                grupoSelect.disabled = false;
+                grupoSelect.style.opacity = '1';
+                grupoSelect.value = user.grupo || '';
+            }
+
+            document.getElementById('turno').value = user.turno || 'Matutino';
+            document.getElementById('username').value = user.username;
+            document.getElementById('password').value = user.password;
+
+            document.getElementById('formTitle').textContent = 'Modificar Cuenta y Recuperar Contraseña';
+            document.getElementById('saveBtn').textContent = 'Actualizar Cambios';
+            document.getElementById('cancelEditBtn').style.display = 'inline-block';
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+        }
+
+        function resetForm() {
+            document.getElementById('adminUserForm').reset();
+            document.getElementById('editUserId').value = '';
+            const grupoSelect = document.getElementById('grupo');
+            grupoSelect.disabled = false;
+            grupoSelect.style.opacity = '1';
+            document.getElementById('formTitle').textContent = 'Registrar Nuevo Usuario / Alumno / Docente';
+            document.getElementById('saveBtn').textContent = 'Guardar Usuario';
+            document.getElementById('cancelEditBtn').style.display = 'none';
+        }
+
+        loadData();
+    </script>
+</body>
+</html>

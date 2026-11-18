@@ -117,29 +117,38 @@ async function handle(request, env) {
       return jsonRes({ success: true });
     }
 
-    // 5. Obtener grupos
+    // 5. Obtener grupos (con sus materias)
     if (path === '/api/admin/groups' && method === 'GET') {
-      const rows = await sb(env, 'groups?select=name&order=name');
-      const groups = rows.length ? rows.map(g => g.name) : ['4IV1', '4IV2', '5IV1'];
+      const rows = await sb(env, 'groups?select=name,subjects&order=name');
+      const groups = {};
+      rows.forEach(g => { groups[g.name] = { subjects: g.subjects || [] }; });
       return jsonRes({ groups });
     }
 
-    // 6. Guardar grupos (reemplaza la lista completa)
+    // 6. Guardar grupos y materias (reemplaza la lista completa)
     if (path === '/api/admin/groups' && method === 'POST') {
       const body = await request.json();
-      const groups = Array.isArray(body.groups) ? body.groups : [];
+      let groups = body.groups || {};
 
+      // Compatibilidad: si llega una lista simple, la convierte al formato nuevo
+      if (Array.isArray(groups)) {
+        const obj = {};
+        groups.forEach(n => { obj[n] = { subjects: [] }; });
+        groups = obj;
+      }
+
+      const names = Object.keys(groups);
       const existing = await sb(env, 'groups?select=name');
       for (const g of existing) {
-        if (!groups.includes(g.name)) {
+        if (!names.includes(g.name)) {
           await sb(env, `groups?name=eq.${enc(g.name)}`, { method: 'DELETE' });
         }
       }
-      if (groups.length) {
+      if (names.length) {
         await sb(env, 'groups?on_conflict=name', {
           method: 'POST',
           prefer: 'resolution=merge-duplicates',
-          body: groups.map(name => ({ name }))
+          body: names.map(name => ({ name, subjects: groups[name].subjects || [] }))
         });
       }
       return jsonRes({ success: true });
