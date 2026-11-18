@@ -48,10 +48,58 @@ function formatNotification(n) {
     teacherName: n.teacher_name,
     classroom: n.classroom,
     message: n.message,
+    group: n.group_name,
+    subject: n.subject,
     timestamp: new Date(n.created_at).toLocaleTimeString('es-MX', {
       timeZone: 'America/Mexico_City'
     })
   };
+}
+
+// ---------- Deteccion automatica de la clase del profesor segun el horario ----------
+const TZ = 'America/Mexico_City';
+const EARLY_MIN = 15; // minutos antes de que empiece la clase en los que ya puede avisar
+
+// Minusculas y sin acentos, para comparar "Miércoles" con "miercoles"
+const norm = s => String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toLowerCase();
+
+// Dia de la semana y minutos transcurridos del dia, en hora de Mexico
+function nowInMexico() {
+  const parts = new Intl.DateTimeFormat('es-MX', {
+    timeZone: TZ, weekday: 'long', hour: '2-digit', minute: '2-digit', hourCycle: 'h23'
+  }).formatToParts(new Date());
+  const get = t => parts.find(p => p.type === t)?.value;
+  return { day: norm(get('weekday')), minutes: Number(get('hour')) * 60 + Number(get('minute')) };
+}
+
+// "07:00 - 09:00" -> { start: 420, end: 540 } (en minutos)
+function parseRange(str) {
+  const m = String(str || '').match(/(\d{1,2}):(\d{2}).*?(\d{1,2}):(\d{2})/);
+  if (!m) return null;
+  return { start: Number(m[1]) * 60 + Number(m[2]), end: Number(m[3]) * 60 + Number(m[4]) };
+}
+
+// Busca en los horarios de todos los grupos la(s) clase(s) que el profesor tiene ahora
+async function findCurrentClasses(env, teacherName) {
+  const { day, minutes } = nowInMexico();
+  const rows = await sb(env, 'schedules?select=group_name,schedule');
+  const found = [];
+
+  for (const row of rows) {
+    for (const item of row.schedule || []) {
+      if (norm(item.teacher) !== norm(teacherName)) continue;
+      if (norm(item.day) !== day) continue;
+      const r = parseRange(item.time);
+      if (!r) continue;
+      if (minutes >= r.start - EARLY_MIN && minutes < r.end) {
+        found.push({ group: row.group_name, subject: item.subject, time: item.time, start: r.start });
+      }
+    }
+  }
+
+  // Si hay una clase que aun no empieza (clases seguidas), se prefiere la proxima
+  const upcoming = found.filter(c => minutes < c.start);
+  return upcoming.length ? upcoming : found;
 }
 
 // Devuelve una Response para rutas /api/*, o null si la ruta no es de la API
@@ -172,21 +220,52 @@ async function handle(request, env) {
       return jsonRes({ success: true });
     }
 
-    // 9. Obtener notificaciones
+    // 9. Obtener notificaciones (si viene ?group=4IV1, solo las de ese grupo)
     if (path === '/api/notifications' && method === 'GET') {
-      const rows = await sb(env, 'notifications?select=*&order=created_at.desc&limit=100');
+      const group = url.searchParams.get('group');
+      let query = 'notifications?select=*&order=created_at.desc&limit=100';
+      if (group) query += `&group_name=eq.${enc(group)}`;
+      const rows = await sb(env, query);
       return jsonRes({ notifications: rows.map(formatNotification) });
     }
 
-    // 10. Enviar notificacion (Docentes)
+    // 10. Enviar notificacion (Docentes): el grupo se detecta solo con el horario
     if (path === '/api/notifications' && method === 'POST') {
       const { teacherName, classroom, message } = await request.json();
+
+      const classes = await findCurrentClasses(env, teacherName);
+      if (!classes.length) {
+        return jsonRes({
+          success: false,
+          message: 'No tienes una clase asignada en este horario. Verifica que tu horario esté registrado en el panel de administración.'
+        }, 409);
+      }
+
       const rows = await sb(env, 'notifications', {
         method: 'POST',
         prefer: 'return=representation',
-        body: { teacher_name: teacherName, classroom, message }
+        body: classes.map(c => ({
+          teacher_name: teacherName,
+          classroom,
+          message,
+          group_name: c.group,
+          subject: c.subject
+        }))
       });
-      return jsonRes({ success: true, notification: formatNotification(rows[0]) });
+      return jsonRes({
+        success: true,
+        notification: formatNotification(rows[0]),
+        groups: classes.map(c => ({ group: c.group, subject: c.subject, time: c.time }))
+      });
+    }
+
+    // 11. Clase actual del profesor (para mostrarla en su panel)
+    if (path === '/api/teacher/current' && method === 'GET') {
+      const name = url.searchParams.get('name') || '';
+      const classes = await findCurrentClasses(env, name);
+      return jsonRes({
+        classes: classes.map(c => ({ group: c.group, subject: c.subject, time: c.time }))
+      });
     }
 
     return jsonRes({ success: false, message: 'Ruta no encontrada' }, 404);

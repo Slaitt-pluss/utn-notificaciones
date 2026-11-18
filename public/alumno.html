@@ -246,7 +246,7 @@
             container.innerHTML = visible.map(n => `
                 <div class="notif-item">
                     <div>
-                        <strong>👨‍🏫 Prof. ${esc(n.teacherName)}</strong> — <em>Salón: ${esc(n.classroom)}</em>
+                        <strong>👨‍🏫 Prof. ${esc(n.teacherName)}</strong> — <em>Salón: ${esc(n.classroom)}</em>${n.subject ? ` — <em>${esc(n.subject)}</em>` : ''}
                         <p style="margin-top: 0.3rem; color: #f8fafc;">${esc(n.message) || 'Sin mensaje adicional'}</p>
                         <small style="color: #64748b; display: block; margin-top: 0.4rem;">Registrado a las: ${esc(n.timestamp)}</small>
                     </div>
@@ -287,7 +287,7 @@
         // --- CARGA DE DATOS ---
         async function loadNotifications() {
             try {
-                const res = await fetch('/api/notifications');
+                const res = await fetch(`/api/notifications?group=${encodeURIComponent(userGroup)}`);
                 const data = await res.json();
                 allNotifications = data.notifications || [];
                 renderAll();
