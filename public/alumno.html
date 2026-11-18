@@ -5,6 +5,66 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>UTN - Panel Alumno</title>
     <link rel="stylesheet" href="css/style.css">
+    <style>
+        .admin-nav {
+            display: flex;
+            gap: 0.75rem;
+            margin-bottom: 1.5rem;
+            flex-wrap: wrap;
+        }
+        .tab-btn {
+            background: rgba(15, 23, 42, 0.6);
+            border: 1px solid #334155;
+            color: #94a3b8;
+            padding: 0.75rem 1.25rem;
+            border-radius: 8px;
+            cursor: pointer;
+            font-weight: 600;
+            transition: all 0.3s ease;
+        }
+        .tab-btn:hover {
+            background: rgba(56, 189, 248, 0.1);
+            color: #38bdf8;
+            border-color: rgba(56, 189, 248, 0.3);
+        }
+        .tab-btn.active {
+            background: linear-gradient(135deg, #0284c7 0%, #0369a1 100%);
+            color: #fff;
+            border-color: #38bdf8;
+            box-shadow: 0 4px 12px rgba(56, 189, 248, 0.2);
+        }
+        .tab-content { display: none; }
+        .tab-content.active { display: block; }
+
+        .badge {
+            display: inline-block;
+            min-width: 1.4rem;
+            padding: 0.05rem 0.45rem;
+            margin-left: 0.4rem;
+            border-radius: 999px;
+            background: rgba(56, 189, 248, 0.25);
+            color: #38bdf8;
+            font-size: 0.8rem;
+            text-align: center;
+        }
+        .tab-btn.active .badge { background: rgba(255, 255, 255, 0.25); color: #fff; }
+
+        .notif-item {
+            background: rgba(15, 23, 42, 0.6);
+            padding: 1rem;
+            border-radius: 8px;
+            margin-bottom: 0.75rem;
+            border-left: 4px solid #38bdf8;
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            gap: 1rem;
+        }
+        .notif-item.archived { border-left-color: #64748b; }
+        .notif-actions { display: flex; gap: 0.4rem; flex-shrink: 0; flex-wrap: wrap; justify-content: flex-end; }
+        .notif-actions .btn { padding: 0.35rem 0.7rem; font-size: 0.8rem; }
+        .toolbar { display: flex; justify-content: space-between; align-items: center; gap: 1rem; flex-wrap: wrap; margin-bottom: 1rem; }
+    </style>
 </head>
 <body>
     <div class="dashboard-container" style="max-width: 1000px;">
@@ -16,32 +76,64 @@
             <button class="btn btn-danger" onclick="logout()">Cerrar Sesión</button>
         </div>
 
-        <!-- Notificaciones en Tiempo Real -->
-        <div class="card">
-            <h3>Notificaciones de Profesores en Tiempo Real</h3>
-            <p>Aquí verás cuando tu profesor marque su llegada al salón:</p>
-            <div id="notificationsList" style="margin-top: 1rem;">
-                <p style="color: #64748b;">Cargando avisos recientes...</p>
+        <!-- Botones de Pestañas / Apartados -->
+        <div class="admin-nav">
+            <button class="tab-btn active" onclick="switchTab('notifTab', this)">🔔 Notificaciones <span class="badge" id="notifCount">0</span></button>
+            <button class="tab-btn" onclick="switchTab('scheduleTab', this)">⏰ Mi Horario</button>
+            <button class="tab-btn" onclick="switchTab('historyTab', this)">🗂️ Historial <span class="badge" id="historyCount">0</span></button>
+        </div>
+
+        <!-- ================= APARTADO 1: NOTIFICACIONES ================= -->
+        <div id="notifTab" class="tab-content active">
+            <div class="card">
+                <div class="toolbar">
+                    <div>
+                        <h3>Notificaciones de Profesores en Tiempo Real</h3>
+                        <p style="color: #94a3b8;">Aquí verás cuando tu profesor marque su llegada al salón. Los avisos que borres se guardan en el Historial.</p>
+                    </div>
+                    <button class="btn btn-danger" id="clearAllBtn" onclick="archiveAll()" style="display: none;">Borrar todas</button>
+                </div>
+                <div id="notificationsList">
+                    <p style="color: #64748b;">Cargando avisos recientes...</p>
+                </div>
             </div>
         </div>
 
-        <!-- Horario Académico del Grupo -->
-        <div class="card" style="margin-top: 1.5rem;">
-            <h3>Mi Horario Académico (<span id="studentGroupTitle"></span>)</h3>
-            <div style="overflow-x: auto; margin-top: 1rem;">
-                <table>
-                    <thead>
-                        <tr>
-                            <th>Día</th>
-                            <th>Horario</th>
-                            <th>Asignatura</th>
-                            <th>Docente Asignado</th>
-                        </tr>
-                    </thead>
-                    <tbody id="studentScheduleBody">
-                        <tr><td colspan="4" style="text-align: center; color: #94a3b8;">Cargando horario del grupo...</td></tr>
-                    </tbody>
-                </table>
+        <!-- ================= APARTADO 2: HORARIO ================= -->
+        <div id="scheduleTab" class="tab-content">
+            <div class="card">
+                <h3>Mi Horario Académico (<span id="studentGroupTitle"></span>)</h3>
+                <div style="overflow-x: auto; margin-top: 1rem;">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Día</th>
+                                <th>Horario</th>
+                                <th>Asignatura</th>
+                                <th>Docente Asignado</th>
+                            </tr>
+                        </thead>
+                        <tbody id="studentScheduleBody">
+                            <tr><td colspan="4" style="text-align: center; color: #94a3b8;">Cargando horario del grupo...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- ================= APARTADO 3: HISTORIAL ================= -->
+        <div id="historyTab" class="tab-content">
+            <div class="card">
+                <div class="toolbar">
+                    <div>
+                        <h3>Historial de Avisos</h3>
+                        <p style="color: #94a3b8;">Avisos de profesores que ya borraste de tu bandeja.</p>
+                    </div>
+                    <button class="btn btn-danger" id="clearHistoryBtn" onclick="clearHistory()" style="display: none;">Vaciar historial</button>
+                </div>
+                <div id="historyList">
+                    <p style="color: #64748b;">Tu historial está vacío.</p>
+                </div>
             </div>
         </div>
     </div>
@@ -49,49 +141,181 @@
     <script>
         const studentName = sessionStorage.getItem('userName') || 'Alumno';
         const userGroup = sessionStorage.getItem('userGroup') || '4IV1';
+        const HISTORY_KEY = `utn_historial_${studentName}`;
+        const DAY_ORDER = ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado', 'Domingo'];
 
         document.getElementById('welcomeStudent').textContent = `Estudiante: ${studentName} (Grupo: ${userGroup})`;
         document.getElementById('studentGroupTitle').textContent = userGroup;
 
+        let allNotifications = [];   // lo que devuelve el servidor
+        let history = loadHistory(); // avisos que el alumno ya borró
+
+        // Evita que un texto con < o > rompa la página
+        const esc = s => String(s ?? '').replace(/[&<>"']/g, c => (
+            { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
+        ));
+
+        function switchTab(tabId, btnElement) {
+            document.querySelectorAll('.tab-content').forEach(tab => tab.classList.remove('active'));
+            document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
+            document.getElementById(tabId).classList.add('active');
+            btnElement.classList.add('active');
+        }
+
         function logout() { sessionStorage.clear(); window.location.href = 'index.html'; }
 
-        // Cargar notificaciones de los profesores
+        // --- HISTORIAL (se guarda en este navegador, por alumno) ---
+        function loadHistory() {
+            try {
+                const raw = localStorage.getItem(HISTORY_KEY);
+                return raw ? JSON.parse(raw) : [];
+            } catch (e) {
+                return [];
+            }
+        }
+
+        function saveHistory() {
+            try {
+                localStorage.setItem(HISTORY_KEY, JSON.stringify(history.slice(0, 200)));
+            } catch (e) {
+                console.error('No se pudo guardar el historial', e);
+            }
+        }
+
+        function archiveNotification(id) {
+            const n = allNotifications.find(x => x.id === id);
+            if (!n || history.some(h => h.id === id)) return;
+            history.unshift({ ...n, archivedAt: new Date().toLocaleString('es-MX') });
+            saveHistory();
+            renderAll();
+        }
+
+        function archiveAll() {
+            const visible = visibleNotifications();
+            if (visible.length === 0) return;
+            if (!confirm(`¿Mover ${visible.length} aviso(s) al historial?`)) return;
+            const stamp = new Date().toLocaleString('es-MX');
+            visible.forEach(n => history.unshift({ ...n, archivedAt: stamp }));
+            saveHistory();
+            renderAll();
+        }
+
+        function restoreNotification(id) {
+            history = history.filter(h => h.id !== id);
+            saveHistory();
+            renderAll();
+        }
+
+        function deleteFromHistory(id) {
+            if (!confirm('¿Eliminar este aviso definitivamente?')) return;
+            history = history.filter(h => h.id !== id);
+            saveHistory();
+            renderAll();
+        }
+
+        function clearHistory() {
+            if (!confirm('¿Vaciar todo el historial? Esta acción no se puede deshacer.')) return;
+            history = [];
+            saveHistory();
+            renderAll();
+        }
+
+        function visibleNotifications() {
+            const archivedIds = new Set(history.map(h => h.id));
+            return allNotifications.filter(n => !archivedIds.has(n.id));
+        }
+
+        // --- RENDER ---
+        function renderAll() {
+            renderNotifications();
+            renderHistory();
+        }
+
+        function renderNotifications() {
+            const container = document.getElementById('notificationsList');
+            const visible = visibleNotifications();
+
+            document.getElementById('notifCount').textContent = visible.length;
+            document.getElementById('clearAllBtn').style.display = visible.length > 0 ? 'inline-block' : 'none';
+
+            if (visible.length === 0) {
+                container.innerHTML = '<p style="color: #94a3b8;">No hay notificaciones de profesores por el momento.</p>';
+                return;
+            }
+
+            container.innerHTML = visible.map(n => `
+                <div class="notif-item">
+                    <div>
+                        <strong>👨‍🏫 Prof. ${esc(n.teacherName)}</strong> — <em>Salón: ${esc(n.classroom)}</em>
+                        <p style="margin-top: 0.3rem; color: #f8fafc;">${esc(n.message) || 'Sin mensaje adicional'}</p>
+                        <small style="color: #64748b; display: block; margin-top: 0.4rem;">Registrado a las: ${esc(n.timestamp)}</small>
+                    </div>
+                    <div class="notif-actions">
+                        <button class="btn btn-danger" onclick="archiveNotification(${Number(n.id)})">Borrar</button>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        function renderHistory() {
+            const container = document.getElementById('historyList');
+            document.getElementById('historyCount').textContent = history.length;
+            document.getElementById('clearHistoryBtn').style.display = history.length > 0 ? 'inline-block' : 'none';
+
+            if (history.length === 0) {
+                container.innerHTML = '<p style="color: #64748b;">Tu historial está vacío.</p>';
+                return;
+            }
+
+            container.innerHTML = history.map(n => `
+                <div class="notif-item archived">
+                    <div>
+                        <strong>👨‍🏫 Prof. ${esc(n.teacherName)}</strong> — <em>Salón: ${esc(n.classroom)}</em>
+                        <p style="margin-top: 0.3rem; color: #f8fafc;">${esc(n.message) || 'Sin mensaje adicional'}</p>
+                        <small style="color: #64748b; display: block; margin-top: 0.4rem;">
+                            Aviso de las ${esc(n.timestamp)} · Borrado el ${esc(n.archivedAt)}
+                        </small>
+                    </div>
+                    <div class="notif-actions">
+                        <button class="btn" onclick="restoreNotification(${Number(n.id)})">Restaurar</button>
+                        <button class="btn btn-danger" onclick="deleteFromHistory(${Number(n.id)})">Eliminar</button>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        // --- CARGA DE DATOS ---
         async function loadNotifications() {
             try {
                 const res = await fetch('/api/notifications');
                 const data = await res.json();
-                const container = document.getElementById('notificationsList');
-                
-                if(data.notifications && data.notifications.length > 0) {
-                    container.innerHTML = data.notifications.map(n => `
-                        <div style="background: rgba(15, 23, 42, 0.6); padding: 1rem; border-radius: 8px; margin-bottom: 0.75rem; border-left: 4px solid #38bdf8;">
-                            <strong>👨‍🏫 Prof. ${n.teacherName}</strong> — <em>Salón: ${n.classroom}</em>
-                            <p style="margin-top: 0.3rem; color: #f8fafc;">${n.message || 'Sin mensaje adicional'}</p>
-                            <small style="color: #64748b; display: block; margin-top: 0.4rem;">Registrado a las: ${n.timestamp}</small>
-                        </div>
-                    `).join('');
-                } else {
-                    container.innerHTML = '<p>No hay notificaciones de profesores registradas por el momento.</p>';
-                }
+                allNotifications = data.notifications || [];
+                renderAll();
             } catch (e) {
                 console.error("Error al cargar notificaciones:", e);
             }
         }
 
-        // Cargar el horario correspondiente al grupo del alumno
         async function loadStudentSchedule() {
             try {
-                const res = await fetch(`/api/admin/schedules/${userGroup}`);
+                const res = await fetch(`/api/admin/schedules/${encodeURIComponent(userGroup)}`);
                 const data = await res.json();
                 const tbody = document.getElementById('studentScheduleBody');
 
                 if (data.schedule && data.schedule.length > 0) {
-                    tbody.innerHTML = data.schedule.map(s => `
+                    // Ordena por día de la semana y luego por hora
+                    const sorted = [...data.schedule].sort((a, b) => {
+                        const da = DAY_ORDER.indexOf(a.day), db = DAY_ORDER.indexOf(b.day);
+                        if (da !== db) return da - db;
+                        return String(a.time).localeCompare(String(b.time));
+                    });
+
+                    tbody.innerHTML = sorted.map(s => `
                         <tr>
-                            <td><span style="padding: 0.2rem 0.5rem; background: rgba(56,189,248,0.2); border-radius: 4px; color: #38bdf8; font-weight: bold;">${s.day || 'N/A'}</span></td>
-                            <td><strong>${s.time}</strong></td>
-                            <td>${s.subject}</td>
-                            <td>${s.teacher}</td>
+                            <td><span style="padding: 0.2rem 0.5rem; background: rgba(56,189,248,0.2); border-radius: 4px; color: #38bdf8; font-weight: bold;">${esc(s.day) || 'N/A'}</span></td>
+                            <td><strong>${esc(s.time)}</strong></td>
+                            <td>${esc(s.subject)}</td>
+                            <td>${esc(s.teacher)}</td>
                         </tr>
                     `).join('');
                 } else {
@@ -102,10 +326,11 @@
             }
         }
 
+        renderAll();
         loadNotifications();
         loadStudentSchedule();
-        
-        // Actualizar notificaciones cada 5 segundos en tiempo real
+
+        // Actualizar notificaciones cada 5 segundos
         setInterval(loadNotifications, 5000);
     </script>
 </body>
