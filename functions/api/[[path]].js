@@ -302,6 +302,44 @@ async function findCurrentClasses(env, teacherName) {
   return upcoming.length ? upcoming : found;
 }
 
+// ---------------------------------------------------------------- Asistencia
+const ATTENDANCE_STATUS = ['presente', 'retardo', 'falta'];
+const collator = new Intl.Collator('es', { sensitivity: 'base' });
+
+// Fecha de hoy (AAAA-MM-DD) en hora de Mexico
+function todayMexico() {
+  return new Intl.DateTimeFormat('en-CA', { timeZone: TZ, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
+}
+
+function studentRow(u) {
+  return {
+    id: u.id,
+    nombre: u.nombre || u.name || '',
+    appPaterno: u.app_paterno || '',
+    appMaterno: u.extra?.appMaterno || ''
+  };
+}
+
+// Orden alfabetico: apellido paterno, apellido materno y nombre (ignora acentos y mayusculas)
+function sortStudents(list) {
+  return list.sort((a, b) =>
+    collator.compare(a.appPaterno, b.appPaterno) ||
+    collator.compare(a.appMaterno, b.appMaterno) ||
+    collator.compare(a.nombre, b.nombre));
+}
+
+// El profesor solo puede tomar lista del grupo con el que tiene clase en este momento
+async function classForGroup(env, teacherName, group) {
+  const classes = await findCurrentClasses(env, teacherName);
+  const cls = classes.find(c => c.group === group);
+  if (!cls) throw new HttpError(409, 'No tienes una clase en curso con ese grupo en este momento.');
+  return cls;
+}
+
+function groupStudents(env, group) {
+  return sb(env, `users?select=id,name,nombre,app_paterno,extra&role=eq.alumno&grupo=eq.${enc(group)}`);
+}
+
 // ---------------------------------------------------------------- Rutas
 // Devuelve una Response para rutas /api/*, o null si la ruta no es de la API
 async function handle(request, env) {
@@ -534,6 +572,66 @@ async function handle(request, env) {
       return jsonRes({
         classes: classes.map(c => ({ group: c.group, subject: c.subject, time: c.time }))
       });
+    }
+
+    // ===== Asistencia (solo docentes, solo de su clase en curso) =====
+    if (path === '/api/teacher/attendance' && method === 'GET') {
+      const s = await requireSession(request, env, ['docente']);
+      const group = url.searchParams.get('group') || '';
+      const cls = await classForGroup(env, s.name, group);
+      const date = todayMexico();
+
+      const students = sortStudents((await groupStudents(env, group)).map(studentRow));
+      const rows = await sb(env,
+        `attendance?select=student_id,status&class_date=eq.${date}&group_name=eq.${enc(group)}` +
+        `&subject=eq.${enc(cls.subject)}&class_time=eq.${enc(cls.time)}`);
+      const saved = {};
+      rows.forEach(r => { saved[r.student_id] = r.status; });
+
+      return jsonRes({ group, subject: cls.subject, time: cls.time, date, students, saved });
+    }
+
+    if (path === '/api/teacher/attendance' && method === 'POST') {
+      const s = await requireSession(request, env, ['docente']);
+      const b = await readJson(request);
+      const group = typeof b.group === 'string' ? b.group : '';
+      const cls = await classForGroup(env, s.name, group);
+
+      const records = Array.isArray(b.records) ? b.records : [];
+      if (!records.length || records.length > 200) throw new HttpError(400, 'Lista de asistencia no válida.');
+
+      // Solo se aceptan alumnos que realmente pertenecen a ese grupo
+      const byId = new Map((await groupStudents(env, group)).map(u => [Number(u.id), studentRow(u)]));
+      const date = todayMexico();
+      const seen = new Set();
+
+      const body = records.map(r => {
+        const id = Number(r?.studentId);
+        const st = byId.get(id);
+        if (!st || !ATTENDANCE_STATUS.includes(r.status) || seen.has(id)) {
+          throw new HttpError(400, 'La lista incluye alumnos o estados no válidos.');
+        }
+        seen.add(id);
+        return {
+          class_date: date,
+          group_name: group,
+          subject: cls.subject,
+          class_time: cls.time,
+          teacher_name: s.name,
+          student_id: id,
+          student_name: `${st.appPaterno} ${st.appMaterno} ${st.nombre}`.replace(/\s+/g, ' ').trim(),
+          status: r.status,
+          updated_at: new Date().toISOString()
+        };
+      });
+
+      // Si ya habia una lista de esta misma clase y dia, se actualiza en lugar de duplicarse
+      await sb(env, 'attendance?on_conflict=class_date,group_name,subject,class_time,student_id', {
+        method: 'POST',
+        prefer: 'resolution=merge-duplicates',
+        body
+      });
+      return jsonRes({ success: true, saved: body.length, subject: cls.subject, time: cls.time });
     }
 
     return jsonRes({ success: false, message: 'Ruta no encontrada' }, 404);

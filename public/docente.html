@@ -5,6 +5,26 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>UTN - Panel Docente</title>
     <link rel="stylesheet" href="css/style.css">
+    <style>
+        .att-toolbar { display: flex; justify-content: space-between; align-items: center; gap: 1rem; flex-wrap: wrap; margin-bottom: 1rem; }
+        .att-summary { display: flex; gap: 0.6rem; flex-wrap: wrap; margin-bottom: 1rem; }
+        .att-chip { padding: 0.3rem 0.8rem; border-radius: 999px; font-size: 0.85rem; font-weight: 600; background: rgba(15, 23, 42, 0.6); border: 1px solid #334155; color: #94a3b8; }
+        .att-chip.presente { color: #34d399; border-color: rgba(52, 211, 153, 0.4); }
+        .att-chip.retardo { color: #fbbf24; border-color: rgba(251, 191, 36, 0.4); }
+        .att-chip.falta { color: #fb7185; border-color: rgba(251, 113, 133, 0.4); }
+        .att-options { display: flex; gap: 0.4rem; }
+        .att-btn {
+            background: rgba(15, 23, 42, 0.6); border: 1px solid #334155; color: #94a3b8;
+            padding: 0.35rem 0.75rem; border-radius: 6px; cursor: pointer; font-weight: 600; font-size: 0.8rem;
+            transition: all 0.2s ease;
+        }
+        .att-btn:hover { border-color: #38bdf8; color: #38bdf8; }
+        .att-btn.on-presente { background: #059669; border-color: #059669; color: #fff; }
+        .att-btn.on-retardo { background: #d97706; border-color: #d97706; color: #fff; }
+        .att-btn.on-falta { background: #e11d48; border-color: #e11d48; color: #fff; }
+        .att-num { color: #64748b; width: 2.5rem; }
+        #attendanceClassSelect { display: none; }
+    </style>
 </head>
 <body>
     <div class="dashboard-container">
@@ -41,21 +61,38 @@
             <button class="btn" onclick="sendArrival()">Transmitir Llegada</button>
         </div>
 
-        <!-- Comunicación y Pase de Lista -->
+        <!-- Asistencia -->
         <div class="card">
-            <h3>Comunicación y Asistencia</h3>
-            <div class="form-grid">
-                <div class="input-group">
-                    <label>Grupo Detectado</label>
-                    <input type="text" id="targetGroupDisplay" readonly style="background: rgba(15, 23, 42, 0.4); color: #38bdf8; font-weight: bold;">
+            <div class="att-toolbar">
+                <div>
+                    <h3>Asistencia</h3>
+                    <p id="attendanceTitle" style="color: #94a3b8;">Aquí aparecerá la lista de tu grupo cuando tengas una clase en curso.</p>
+                </div>
+                <select id="attendanceClassSelect" onchange="loadAttendance(currentClasses[this.value].group)"></select>
+            </div>
+
+            <div id="attendancePanel" style="display: none;">
+                <div class="att-summary" id="attendanceSummary"></div>
+
+                <div style="overflow-x: auto;">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>#</th>
+                                <th>Alumno (Apellido paterno, materno y nombre)</th>
+                                <th>Asistencia</th>
+                            </tr>
+                        </thead>
+                        <tbody id="attendanceBody"></tbody>
+                    </table>
+                </div>
+
+                <div style="display: flex; gap: 1rem; flex-wrap: wrap; margin-top: 1rem; align-items: center;">
+                    <button class="btn" onclick="markAll('presente')" style="background: #334155;">Marcar todos presentes</button>
+                    <button class="btn" id="saveAttendanceBtn" onclick="saveAttendance()" style="background: linear-gradient(135deg, #059669 0%, #047857 100%);">Guardar Pase de Lista</button>
+                    <span id="attendanceStatus" style="color: #94a3b8; font-size: 0.9rem;"></span>
                 </div>
             </div>
-            <div class="input-group" style="margin-bottom: 1rem; margin-top: 1rem;">
-                <label>Enviar Anuncio o Mensaje al Grupo</label>
-                <textarea id="groupMessage" rows="2" maxlength="500" placeholder="Escribe un aviso importante para tus alumnos..."></textarea>
-            </div>
-            <button class="btn" onclick="sendGroupMessage()" style="margin-right: 1rem;">Enviar Mensaje</button>
-            <button class="btn" onclick="takeAttendance()" style="background: linear-gradient(135deg, #059669 0%, #047857 100%);">Guardar Pase de Lista</button>
         </div>
     </div>
 
@@ -82,12 +119,14 @@
             window.location.href = 'index.html';
         }
 
-        let detectedGroup = '';
+        let currentClasses = [];
+        let currentKey = '';
+        let attendance = { group: '', students: [], marks: {}, alreadySaved: false };
 
+        // ================= CLASE ACTUAL =================
         // El servidor revisa el día y la hora actuales contra los horarios y devuelve la clase en curso
         async function detectCurrentClass() {
             const container = document.getElementById('currentClassInfo');
-            const groupField = document.getElementById('targetGroupDisplay');
 
             try {
                 const res = await fetch('/api/teacher/current');
@@ -95,29 +134,29 @@
                 const classes = data.classes || [];
 
                 if (res.ok && classes.length > 0) {
-                    detectedGroup = classes.map(c => c.group).join(', ');
-                    groupField.value = detectedGroup;
                     container.innerHTML = classes.map(c => `
                         <p style="font-size: 1.1rem; color: #f8fafc;">📚 Materia: <strong style="color: #38bdf8;">${esc(c.subject)}</strong></p>
                         <p style="margin-top: 0.3rem; margin-bottom: 0.75rem;">🏫 Grupo Asignado: <strong>${esc(c.group)}</strong> | ⏰ Horario: <strong>${esc(c.time)}</strong></p>
                     `).join('');
+                    onClassesChanged(classes);
                 } else if (res.ok) {
-                    detectedGroup = '';
-                    groupField.value = 'Sin clase en curso';
                     container.innerHTML = `<p style="color: #94a3b8;">No tienes una clase en curso en este momento. Aquí aparecerá tu clase 15 minutos antes de que empiece, según el horario registrado por el administrador.</p>`;
+                    onClassesChanged([]);
                 } else {
                     throw new Error(data.message || 'Error del servidor');
                 }
             } catch (e) {
                 console.error("Error al detectar clase:", e);
-                detectedGroup = '';
-                groupField.value = '';
                 container.innerHTML = `<p style="color: #f43f5e;">No se pudo consultar tu horario. Revisa tu conexión; se reintentará automáticamente.</p>`;
             }
         }
 
+        // ================= LLEGADA =================
         // Envía un aviso; el servidor decide el grupo según tu horario
-        async function postNotice(classroom, message) {
+        async function sendArrival() {
+            const classroom = document.getElementById('classroom').value.trim();
+            const message = document.getElementById('notificationMsg').value.trim();
+
             const res = await fetch('/api/notifications', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -127,41 +166,145 @@
 
             if (!data.success) {
                 alert(data.message || 'No se pudo enviar el aviso.');
-                return false;
+                return;
             }
             const groups = (data.groups || []).map(g => g.group).join(', ');
-            alert(`¡Aviso enviado con éxito al grupo ${groups}!`);
-            return true;
+            alert(`¡Llegada notificada con éxito al grupo ${groups}!`);
+            document.getElementById('notificationMsg').value = '';
         }
 
-        async function sendArrival() {
-            const classroom = document.getElementById('classroom').value.trim();
-            const message = document.getElementById('notificationMsg').value.trim();
-            if (await postNotice(classroom, message)) {
-                document.getElementById('notificationMsg').value = '';
-            }
-        }
+        // ================= ASISTENCIA =================
+        // Solo recarga la lista cuando cambia la clase, para no borrar lo que el profesor ya marcó
+        function onClassesChanged(classes) {
+            const key = classes.map(c => `${c.group}|${c.subject}|${c.time}`).join(';');
+            if (key === currentKey) return;
+            currentKey = key;
+            currentClasses = classes;
 
-        async function sendGroupMessage() {
-            const input = document.getElementById('groupMessage');
-            const message = input.value.trim();
-            if (!message) {
-                alert('Escribe el mensaje que quieres enviar.');
+            const select = document.getElementById('attendanceClassSelect');
+            if (classes.length === 0) {
+                document.getElementById('attendancePanel').style.display = 'none';
+                document.getElementById('attendanceTitle').textContent = 'Aquí aparecerá la lista de tu grupo cuando tengas una clase en curso.';
+                select.style.display = 'none';
                 return;
             }
-            const classroom = document.getElementById('classroom').value.trim();
-            if (await postNotice(classroom, message)) {
-                input.value = '';
+
+            select.innerHTML = classes.map((c, i) => `<option value="${i}">${esc(c.group)} — ${esc(c.subject)}</option>`).join('');
+            select.style.display = classes.length > 1 ? 'inline-block' : 'none';
+            loadAttendance(classes[0].group);
+        }
+
+        async function loadAttendance(group) {
+            const title = document.getElementById('attendanceTitle');
+            const panel = document.getElementById('attendancePanel');
+            title.textContent = 'Cargando lista de alumnos...';
+
+            try {
+                const res = await fetch(`/api/teacher/attendance?group=${encodeURIComponent(group)}`);
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.message || 'No se pudo cargar la lista.');
+
+                const saved = data.saved || {};
+                attendance = {
+                    group: data.group,
+                    students: data.students || [],
+                    marks: {},
+                    alreadySaved: Object.keys(saved).length > 0
+                };
+                // Por omisión todos "Presente"; si ya se guardó la lista de hoy, se respeta lo guardado
+                attendance.students.forEach(st => { attendance.marks[st.id] = saved[st.id] || 'presente'; });
+
+                const fecha = new Date(`${data.date}T12:00:00`).toLocaleDateString('es-MX', {
+                    weekday: 'long', day: 'numeric', month: 'long'
+                });
+                title.textContent = `Grupo ${data.group} · ${data.subject} · ${data.time} · ${fecha}`;
+
+                if (attendance.students.length === 0) {
+                    panel.style.display = 'none';
+                    title.textContent += ' — No hay alumnos registrados en este grupo.';
+                    return;
+                }
+
+                document.getElementById('attendanceStatus').textContent = attendance.alreadySaved
+                    ? 'Ya guardaste la asistencia de esta clase hoy; puedes modificarla.'
+                    : '';
+                panel.style.display = 'block';
+                renderAttendance();
+            } catch (e) {
+                console.error('Error al cargar la lista:', e);
+                panel.style.display = 'none';
+                title.textContent = e.message;
             }
         }
 
-        // Pendiente: todavía no guarda nada en la base de datos
-        function takeAttendance() {
-            if (!detectedGroup) {
-                alert('No hay un grupo activo detectado para el pase de lista.');
-                return;
+        const fullName = st => [st.appPaterno, st.appMaterno, st.nombre].filter(Boolean).join(' ');
+
+        function renderAttendance() {
+            const opts = [['presente', 'Presente'], ['retardo', 'Retardo'], ['falta', 'Falta']];
+
+            document.getElementById('attendanceBody').innerHTML = attendance.students.map((st, i) => `
+                <tr>
+                    <td class="att-num">${i + 1}</td>
+                    <td>${esc(fullName(st))}</td>
+                    <td>
+                        <div class="att-options">
+                            ${opts.map(([val, label]) => `
+                                <button class="att-btn ${attendance.marks[st.id] === val ? 'on-' + val : ''}"
+                                        onclick="setMark(${Number(st.id)}, '${val}')">${label}</button>
+                            `).join('')}
+                        </div>
+                    </td>
+                </tr>
+            `).join('');
+
+            const count = s => Object.values(attendance.marks).filter(v => v === s).length;
+            document.getElementById('attendanceSummary').innerHTML = `
+                <span class="att-chip">Total: ${attendance.students.length}</span>
+                <span class="att-chip presente">Presentes: ${count('presente')}</span>
+                <span class="att-chip retardo">Retardos: ${count('retardo')}</span>
+                <span class="att-chip falta">Faltas: ${count('falta')}</span>
+            `;
+        }
+
+        function setMark(id, status) {
+            attendance.marks[id] = status;
+            document.getElementById('attendanceStatus').textContent = 'Cambios sin guardar.';
+            renderAttendance();
+        }
+
+        function markAll(status) {
+            attendance.students.forEach(st => { attendance.marks[st.id] = status; });
+            document.getElementById('attendanceStatus').textContent = 'Cambios sin guardar.';
+            renderAttendance();
+        }
+
+        async function saveAttendance() {
+            const btn = document.getElementById('saveAttendanceBtn');
+            const status = document.getElementById('attendanceStatus');
+            const records = attendance.students.map(st => ({ studentId: st.id, status: attendance.marks[st.id] }));
+
+            btn.disabled = true;
+            status.textContent = 'Guardando...';
+            try {
+                const res = await fetch('/api/teacher/attendance', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ group: attendance.group, records })
+                });
+                const data = await res.json().catch(() => ({}));
+                if (!data.success) {
+                    alert(data.message || 'No se pudo guardar el pase de lista.');
+                    status.textContent = 'No se guardó.';
+                    return;
+                }
+                const hora = new Date().toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' });
+                status.textContent = `✔ Pase de lista guardado a las ${hora}.`;
+            } catch (e) {
+                console.error(e);
+                status.textContent = 'No se guardó. Revisa tu conexión.';
+            } finally {
+                btn.disabled = false;
             }
-            alert(`El pase de lista del grupo ${detectedGroup} aún no está disponible.`);
         }
 
         detectCurrentClass();
