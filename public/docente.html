@@ -27,14 +27,15 @@
         <!-- Notificación de llegada -->
         <div class="card">
             <h3>Reportar Llegada a Salón</h3>
+            <p style="color: #94a3b8; margin-bottom: 1rem;">El aviso se envía automáticamente al grupo de tu clase en curso.</p>
             <div class="form-grid">
                 <div class="input-group">
                     <label>Salón / Laboratorio</label>
-                    <input type="text" id="classroom" placeholder="Ej. Edificio B - 204">
+                    <input type="text" id="classroom" maxlength="40" placeholder="Ej. Edificio B - 204">
                 </div>
                 <div class="input-group">
                     <label>Mensaje Breve</label>
-                    <input type="text" id="notificationMsg" placeholder="Iniciando clase puntual">
+                    <input type="text" id="notificationMsg" maxlength="500" placeholder="Iniciando clase puntual">
                 </div>
             </div>
             <button class="btn" onclick="sendArrival()">Transmitir Llegada</button>
@@ -45,13 +46,13 @@
             <h3>Comunicación y Asistencia</h3>
             <div class="form-grid">
                 <div class="input-group">
-                    <label>Grupo Detectado / Seleccionado</label>
+                    <label>Grupo Detectado</label>
                     <input type="text" id="targetGroupDisplay" readonly style="background: rgba(15, 23, 42, 0.4); color: #38bdf8; font-weight: bold;">
                 </div>
             </div>
             <div class="input-group" style="margin-bottom: 1rem; margin-top: 1rem;">
                 <label>Enviar Anuncio o Mensaje al Grupo</label>
-                <textarea id="groupMessage" rows="2" placeholder="Escribe un aviso importante para tus alumnos..."></textarea>
+                <textarea id="groupMessage" rows="2" maxlength="500" placeholder="Escribe un aviso importante para tus alumnos..."></textarea>
             </div>
             <button class="btn" onclick="sendGroupMessage()" style="margin-right: 1rem;">Enviar Mensaje</button>
             <button class="btn" onclick="takeAttendance()" style="background: linear-gradient(135deg, #059669 0%, #047857 100%);">Guardar Pase de Lista</button>
@@ -59,84 +60,113 @@
     </div>
 
     <script>
+        // Si el servidor responde 401 (sesión vencida o inexistente), regresa al inicio
+        const _fetch = window.fetch.bind(window);
+        window.fetch = async (...args) => {
+            const res = await _fetch(...args);
+            if (res.status === 401) { sessionStorage.clear(); window.location.href = 'index.html'; }
+            return res;
+        };
+
+        // Evita que un texto con < o > se interprete como HTML
+        const esc = s => String(s ?? '').replace(/[&<>"']/g, c => (
+            { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
+        ));
+
         const teacherName = sessionStorage.getItem('userName') || 'Docente';
         document.getElementById('welcomeTeacher').textContent = `Bienvenido, Profesor(a) ${teacherName}`;
-        function logout() { sessionStorage.clear(); window.location.href = 'index.html'; }
+
+        async function logout() {
+            try { await fetch('/api/logout', { method: 'POST' }); } catch (e) {}
+            sessionStorage.clear();
+            window.location.href = 'index.html';
+        }
 
         let detectedGroup = '';
 
-        // Buscar en todos los horarios de los grupos qué clase le corresponde al profesor actualmente
+        // El servidor revisa el día y la hora actuales contra los horarios y devuelve la clase en curso
         async function detectCurrentClass() {
+            const container = document.getElementById('currentClassInfo');
+            const groupField = document.getElementById('targetGroupDisplay');
+
             try {
-                // Obtenemos la lista de grupos registrados
-                const resGroups = await fetch('/api/admin/groups');
-                const dataGroups = await resGroups.json();
-                const groups = dataGroups.groups || [];
+                const res = await fetch('/api/teacher/current');
+                const data = await res.json();
+                const classes = data.classes || [];
 
-                let foundClass = null;
-
-                // Revisamos los horarios de cada grupo
-                for (const g of groups) {
-                    const resSch = await fetch(`/api/admin/schedules/${g}`);
-                    const dataSch = await resSch.json();
-                    const schedule = dataSch.schedule || [];
-
-                    // Buscamos si alguna materia tiene asignado a este docente
-                    const match = schedule.find(s => s.teacher && s.teacher.trim().toLowerCase() === teacherName.trim().toLowerCase());
-                    if (match) {
-                        foundClass = { group: g, ...match };
-                        break; // Tomamos la primera coincidencia o la activa
-                    }
-                }
-
-                const container = document.getElementById('currentClassInfo');
-                if (foundClass) {
-                    detectedGroup = foundClass.group;
-                    document.getElementById('targetGroupDisplay').value = detectedGroup;
-                    container.innerHTML = `
-                        <p style="font-size: 1.1rem; color: #f8fafc;">📚 Materia: <strong style="color: #38bdf8;">${foundClass.subject}</strong></p>
-                        <p style="margin-top: 0.3rem;">🏫 Grupo Asignado: <strong>${foundClass.group}</strong> | ⏰ Horario: <strong>${foundClass.time}</strong></p>
-                    `;
+                if (res.ok && classes.length > 0) {
+                    detectedGroup = classes.map(c => c.group).join(', ');
+                    groupField.value = detectedGroup;
+                    container.innerHTML = classes.map(c => `
+                        <p style="font-size: 1.1rem; color: #f8fafc;">📚 Materia: <strong style="color: #38bdf8;">${esc(c.subject)}</strong></p>
+                        <p style="margin-top: 0.3rem; margin-bottom: 0.75rem;">🏫 Grupo Asignado: <strong>${esc(c.group)}</strong> | ⏰ Horario: <strong>${esc(c.time)}</strong></p>
+                    `).join('');
+                } else if (res.ok) {
+                    detectedGroup = '';
+                    groupField.value = 'Sin clase en curso';
+                    container.innerHTML = `<p style="color: #94a3b8;">No tienes una clase en curso en este momento. Aquí aparecerá tu clase 15 minutos antes de que empiece, según el horario registrado por el administrador.</p>`;
                 } else {
-                    detectedGroup = 'General';
-                    document.getElementById('targetGroupDisplay').value = 'Sin grupo asignado en horario';
-                    container.innerHTML = `<p style="color: #94a3b8;">No se encontró una materia activa asociada a tu nombre en los horarios configurados.</p>`;
+                    throw new Error(data.message || 'Error del servidor');
                 }
             } catch (e) {
                 console.error("Error al detectar clase:", e);
+                detectedGroup = '';
+                groupField.value = '';
+                container.innerHTML = `<p style="color: #f43f5e;">No se pudo consultar tu horario. Revisa tu conexión; se reintentará automáticamente.</p>`;
             }
         }
 
-        async function sendArrival() {
-            const classroom = document.getElementById('classroom').value;
-            const message = document.getElementById('notificationMsg').value;
-
+        // Envía un aviso; el servidor decide el grupo según tu horario
+        async function postNotice(classroom, message) {
             const res = await fetch('/api/notifications', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ teacherName, classroom, message: `[Grupo: ${detectedGroup}] ${message}` })
+                body: JSON.stringify({ classroom, message })
             });
-            const data = await res.json();
-            if(data.success) alert('¡Llegada notificada con éxito a los alumnos!');
+            const data = await res.json().catch(() => ({}));
+
+            if (!data.success) {
+                alert(data.message || 'No se pudo enviar el aviso.');
+                return false;
+            }
+            const groups = (data.groups || []).map(g => g.group).join(', ');
+            alert(`¡Aviso enviado con éxito al grupo ${groups}!`);
+            return true;
         }
 
-        function sendGroupMessage() {
-            if(!detectedGroup || detectedGroup === 'General') {
-                alert('No hay un grupo activo detectado para enviar el mensaje.');
+        async function sendArrival() {
+            const classroom = document.getElementById('classroom').value.trim();
+            const message = document.getElementById('notificationMsg').value.trim();
+            if (await postNotice(classroom, message)) {
+                document.getElementById('notificationMsg').value = '';
+            }
+        }
+
+        async function sendGroupMessage() {
+            const input = document.getElementById('groupMessage');
+            const message = input.value.trim();
+            if (!message) {
+                alert('Escribe el mensaje que quieres enviar.');
                 return;
             }
-            alert(`Mensaje enviado correctamente al grupo ${detectedGroup}.`);
+            const classroom = document.getElementById('classroom').value.trim();
+            if (await postNotice(classroom, message)) {
+                input.value = '';
+            }
         }
 
+        // Pendiente: todavía no guarda nada en la base de datos
         function takeAttendance() {
-            if(!detectedGroup || detectedGroup === 'General') {
+            if (!detectedGroup) {
                 alert('No hay un grupo activo detectado para el pase de lista.');
                 return;
             }
-            alert(`Pase de lista del grupo ${detectedGroup} guardado correctamente.`);
+            alert(`El pase de lista del grupo ${detectedGroup} aún no está disponible.`);
         }
 
         detectCurrentClass();
+        // La clase cambia con la hora: se vuelve a consultar cada minuto
+        setInterval(detectCurrentClass, 60000);
     </script>
 </body>
 </html>
