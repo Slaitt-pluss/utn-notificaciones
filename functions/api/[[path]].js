@@ -220,13 +220,27 @@ function validateGroups(input) {
 function validateSchedule(group, schedule) {
   if (!GROUP_RE.test(String(group || ''))) throw new HttpError(400, 'Grupo no válido.');
   if (!Array.isArray(schedule) || schedule.length > 100) throw new HttpError(400, 'Horario no válido.');
-  return schedule.map(it => {
+  const clean = schedule.map(it => {
     const range = parseRange(it?.time);
     if (!DAYS.includes(it?.day) || !range || range.end <= range.start || !str(it.subject, 60)) {
       throw new HttpError(400, 'Hay filas del horario con datos no válidos (día, hora o materia).');
     }
     return { day: it.day, time: str(it.time, 20), subject: str(it.subject, 60), teacher: str(it.teacher, 120) };
   });
+
+  // Dos clases del mismo grupo no pueden empalmarse el mismo dia
+  const byDay = {};
+  clean.forEach(c => { (byDay[c.day] ||= []).push({ ...parseRange(c.time), c }); });
+  for (const [day, list] of Object.entries(byDay)) {
+    list.sort((a, b) => a.start - b.start);
+    for (let i = 1; i < list.length; i++) {
+      if (list[i].start < list[i - 1].end) {
+        throw new HttpError(400,
+          `Hay clases que se empalman el ${day}: ${list[i - 1].c.time} (${list[i - 1].c.subject}) y ${list[i].c.time} (${list[i].c.subject}).`);
+      }
+    }
+  }
+  return clean;
 }
 
 function dupCheck(err) {

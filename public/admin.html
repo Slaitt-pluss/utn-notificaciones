@@ -39,6 +39,27 @@
         .tab-content.active {
             display: block;
         }
+
+        /* Horarios: selector de días y vista semanal */
+        .day-checks { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+        .day-check {
+            display: flex; align-items: center; gap: 0.4rem; padding: 0.4rem 0.8rem;
+            background: rgba(15, 23, 42, 0.6); border: 1px solid #334155; border-radius: 8px;
+            cursor: pointer; color: #94a3b8; font-weight: 600;
+        }
+        .day-check input { width: auto; margin: 0; }
+        .day-check:has(input:checked) { border-color: #38bdf8; color: #38bdf8; background: rgba(56, 189, 248, 0.1); }
+        .week-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 0.75rem; margin-top: 1rem; }
+        .day-col { background: rgba(15, 23, 42, 0.4); border: 1px solid #334155; border-radius: 8px; padding: 0.6rem; }
+        .day-col h5 { color: #38bdf8; margin: 0 0 0.5rem 0; font-size: 0.95rem; }
+        .class-card {
+            background: rgba(56, 189, 248, 0.08); border: 1px solid rgba(56, 189, 248, 0.25);
+            border-radius: 6px; padding: 0.5rem 0.6rem; margin-bottom: 0.5rem; font-size: 0.85rem;
+        }
+        .class-card .time { font-weight: 700; color: #f8fafc; }
+        .class-card .teacher { color: #94a3b8; }
+        .class-card .actions { display: flex; gap: 0.3rem; margin-top: 0.4rem; }
+        .class-card .actions button { padding: 0.2rem 0.55rem; font-size: 0.75rem; }
     </style>
 </head>
 <body>
@@ -155,53 +176,53 @@
         <div id="schedulesTab" class="tab-content">
             <div class="card">
                 <h3>Gestión de Horarios Académicos por Grupo</h3>
-                <div class="form-grid" style="margin-bottom: 1rem;">
+                <div class="form-grid">
                     <div class="input-group">
                         <label>Seleccionar Grupo a Configurar</label>
-                        <select id="scheduleGroupSelect" onchange="loadGroupSchedule()">
+                        <select id="scheduleGroupSelect" onchange="resetScheduleForm(); loadGroupSchedule()">
                             <!-- Se llena dinámicamente -->
                         </select>
                     </div>
                 </div>
+            </div>
 
-                <!-- Contenedor del Editor -->
-                <div id="scheduleEditorContainer">
-                    <p style="color: #94a3b8; margin-bottom: 1rem;">Configura las materias (del catálogo del grupo), días, horas y profesores:</p>
-                    <div id="scheduleRows">
-                        <!-- Filas dinámicas de horario -->
+            <div class="card" style="margin-top: 1.5rem;">
+                <h3 id="schFormTitle">Agregar clase al horario</h3>
+                <p style="color: #94a3b8; margin-bottom: 1rem;">Llena el formulario y pulsa guardar: la clase se almacena al momento. Puedes marcar varios días para la misma clase y horario.</p>
+                <div class="input-group" style="margin-bottom: 1rem;">
+                    <label>Días</label>
+                    <div class="day-checks" id="schDays"></div>
+                </div>
+                <div class="form-grid">
+                    <div class="input-group">
+                        <label>Hora de inicio</label>
+                        <select id="schStart" onchange="fixEndTime()"></select>
                     </div>
-                    <div style="display: flex; gap: 1rem; margin-top: 1rem; flex-wrap: wrap;">
-                        <button class="btn" onclick="addScheduleRow()" style="background: #334155;">+ Agregar Fila al Horario</button>
-                        <button class="btn" onclick="saveGroupSchedule()" style="background: #059669;">Guardar Cambios</button>
-                        <button class="btn btn-danger" onclick="toggleSchedulePreview(true)">Ver Vista Previa</button>
+                    <div class="input-group">
+                        <label>Hora de fin</label>
+                        <select id="schEnd"></select>
+                    </div>
+                    <div class="input-group">
+                        <label>Materia</label>
+                        <select id="schSubject"></select>
+                    </div>
+                    <div class="input-group">
+                        <label>Profesor</label>
+                        <select id="schTeacher"></select>
                     </div>
                 </div>
-
-                <!-- Contenedor de la Vista Previa -->
-                <div id="schedulePreviewContainer" style="display: none; margin-top: 1rem;">
-                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
-                        <h4 style="color: #38bdf8;">👁️ Vista Previa del Horario (<span id="previewGroupName"></span>)</h4>
-                        <button class="btn" onclick="toggleSchedulePreview(false)">✏️ Editar Horario</button>
-                    </div>
-                    <div style="overflow-x: auto;">
-                        <table>
-                            <thead>
-                                <tr>
-                                    <th>Día</th>
-                                    <th>Horario</th>
-                                    <th>Asignatura</th>
-                                    <th>Docente Asignado</th>
-                                </tr>
-                            </thead>
-                            <tbody id="previewScheduleBody">
-                                <!-- Se renderiza la tabla previa -->
-                            </tbody>
-                        </table>
-                    </div>
+                <div style="display: flex; gap: 1rem; margin-top: 1rem; align-items: center; flex-wrap: wrap;">
+                    <button class="btn" id="schSaveBtn" onclick="saveScheduleEntry()" style="background: #059669;">Guardar clase</button>
+                    <button class="btn btn-danger" id="schCancelBtn" onclick="resetScheduleForm()" style="display: none;">Cancelar edición</button>
+                    <span id="schMsg" style="color: #94a3b8; font-size: 0.9rem;"></span>
                 </div>
             </div>
-        </div>
 
+            <div class="card" style="margin-top: 1.5rem;">
+                <h3>📅 Horario semanal (<span id="weekGroupName"></span>) · <span id="weekCount">0</span> clases</h3>
+                <div class="week-grid" id="weekGrid"></div>
+            </div>
+        </div>
     </div>
 
     <script>
@@ -321,14 +342,18 @@
             const select = document.getElementById('grupo');
             if (!select) return;
             const groupNames = Object.keys(groupsData);
+            const prev = select.value;
             select.innerHTML = groupNames.map(g => `<option value="${esc(g)}">${esc(g)}</option>`).join('');
+            if (groupNames.includes(prev)) select.value = prev;
         }
 
         function updateScheduleGroupDropdown() {
             const select = document.getElementById('scheduleGroupSelect');
             if (!select) return;
             const groupNames = Object.keys(groupsData);
+            const prev = select.value;
             select.innerHTML = groupNames.map(g => `<option value="${esc(g)}">${esc(g)}</option>`).join('');
+            if (groupNames.includes(prev)) select.value = prev;
             loadGroupSchedule();
         }
 
@@ -441,23 +466,8 @@
             }
         }
 
-        // --- GESTIÓN DE HORARIOS Y VISTA PREVIA ---
-        async function loadGroupSchedule() {
-            const group = document.getElementById('scheduleGroupSelect').value;
-            if (!group) return;
-
-            try {
-                const res = await fetch(`/api/admin/schedules/${group}`);
-                const data = await res.json();
-                currentGroupSchedule = data.schedule || [];
-                renderScheduleRows(currentGroupSchedule);
-                updateSchedulePreviewDOM();
-            } catch (e) {
-                console.error("Error al cargar horario", e);
-            }
-        }
-
-        // --- HORAS DE CLASE (07:00 a 22:00) ---
+        // --- GESTIÓN DE HORARIOS (formulario + vista semanal) ---
+        const DAYS = ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'];
         const HORA_INICIO = 7;   // 07:00
         const HORA_FIN = 22;     // 22:00
         const PASO_MIN = 60;     // 60 = cada hora, 30 = cada media hora
@@ -465,19 +475,12 @@
         function horasDisponibles() {
             const list = [];
             for (let m = HORA_INICIO * 60; m <= HORA_FIN * 60; m += PASO_MIN) {
-                const h = String(Math.floor(m / 60)).padStart(2, '0');
-                const mm = String(m % 60).padStart(2, '0');
-                list.push(`${h}:${mm}`);
+                list.push(`${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`);
             }
             return list;
         }
 
-        function timeOptions(selected, placeholder) {
-            return `<option value="">${placeholder}</option>` +
-                horasDisponibles().map(h => `<option value="${h}" ${h === selected ? 'selected' : ''}>${h}</option>`).join('');
-        }
-
-        // Convierte "07:00 - 09:00" (o "7:00 a 9:00") en { start: "07:00", end: "09:00" }
+        // "07:00 - 09:00" (o "7:00 a 9:00") -> { start: "07:00", end: "09:00" }
         function parseTimeRange(str) {
             const m = (str || '').match(/(\d{1,2}):(\d{2}).*?(\d{1,2}):(\d{2})/);
             if (!m) return { start: '', end: '' };
@@ -485,181 +488,250 @@
             return { start: `${pad(m[1])}:${m[2]}`, end: `${pad(m[3])}:${m[4]}` };
         }
 
-        function timeCellHTML(timeStr) {
-            const { start, end } = parseTimeRange(timeStr);
-            return `
-                <div style="display:flex; gap:0.4rem; align-items:center;">
-                    <select class="sch-start" onchange="fixEndTime(this)">${timeOptions(start, 'Inicio')}</select>
-                    <span>a</span>
-                    <select class="sch-end">${timeOptions(end, 'Fin')}</select>
-                </div>`;
+        const toMin = t => { const [h, m] = t.split(':').map(Number); return h * 60 + m; };
+
+        function sortSchedule(list) {
+            return list.sort((a, b) =>
+                DAYS.indexOf(a.day) - DAYS.indexOf(b.day) ||
+                parseTimeRange(a.time).start.localeCompare(parseTimeRange(b.time).start));
+        }
+
+        const sameEntry = (a, b) =>
+            a.day === b.day && a.time === b.time && a.subject === b.subject && (a.teacher || '') === (b.teacher || '');
+
+        // Devuelve la clase con la que se empalma `entry` (mismo día y horas cruzadas), o undefined
+        function findOverlap(list, entry) {
+            const r = parseTimeRange(entry.time);
+            if (!r.start) return undefined;
+            return list.find(e => {
+                if (e.day !== entry.day) return false;
+                const o = parseTimeRange(e.time);
+                return o.start && toMin(r.start) < toMin(o.end) && toMin(o.start) < toMin(r.end);
+            });
+        }
+        // (fin de funciones puras)
+
+        const el = id => document.getElementById(id);
+        const currentScheduleGroup = () => el('scheduleGroupSelect').value;
+        let editingOriginal = null;   // clase que se está editando (null = clase nueva)
+
+        function initScheduleForm() {
+            el('schDays').innerHTML = DAYS.map(d => `
+                <label class="day-check"><input type="checkbox" value="${d}" onchange="onDayToggle(this)"> ${d}</label>
+            `).join('');
+
+            const hours = horasDisponibles();
+            el('schStart').innerHTML = `<option value="">Inicio</option>` +
+                hours.slice(0, -1).map(h => `<option value="${h}">${h}</option>`).join('');
+            el('schEnd').innerHTML = `<option value="">Fin</option>` +
+                hours.slice(1).map(h => `<option value="${h}">${h}</option>`).join('');
+            refreshScheduleForm();
+        }
+
+        // Al editar una clase solo se permite un día
+        function onDayToggle(box) {
+            if (editingOriginal && box.checked) {
+                document.querySelectorAll('#schDays input').forEach(i => { if (i !== box) i.checked = false; });
+            }
         }
 
         // Si la hora de fin es menor o igual a la de inicio, la ajusta a la siguiente disponible
-        function fixEndTime(startSelect) {
-            const row = startSelect.closest('.schedule-row');
-            const endSelect = row.querySelector('.sch-end');
-            const start = startSelect.value;
-            if (start && (!endSelect.value || endSelect.value <= start)) {
-                const next = horasDisponibles().find(h => h > start);
-                endSelect.value = next || '';
+        function fixEndTime() {
+            const start = el('schStart').value;
+            const end = el('schEnd').value;
+            if (start && (!end || end <= start)) {
+                el('schEnd').value = horasDisponibles().find(h => h > start) || '';
             }
         }
 
-        function getRowTime(row) {
-            const s = row.querySelector('.sch-start').value;
-            const e = row.querySelector('.sch-end').value;
-            return (s && e) ? `${s} - ${e}` : '';
+        function setOptions(select, values, placeholder) {
+            const prev = select.value;
+            const all = (prev && !values.includes(prev)) ? [...values, prev] : values;  // conserva lo elegido
+            select.innerHTML = `<option value="">${esc(placeholder)}</option>` +
+                all.map(v => `<option value="${esc(v)}">${esc(v)}</option>`).join('');
+            if (prev) select.value = prev;
         }
 
-        function renderScheduleRows(schedule) {
-            const container = document.getElementById('scheduleRows');
-            const days = ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'];
-            const currentGroup = document.getElementById('scheduleGroupSelect').value;
-            const groupSubjects = (groupsData[currentGroup] && groupsData[currentGroup].subjects) ? groupsData[currentGroup].subjects : [];
-
-            container.innerHTML = schedule.map((item) => `
-                <div class="form-grid schedule-row" style="margin-bottom: 0.5rem; background: rgba(15, 23, 42, 0.4); padding: 0.5rem; border-radius: 8px; align-items: center;">
-                    <select class="sch-day">
-                        ${days.map(d => `<option value="${d}" ${item.day === d ? 'selected' : ''}>${d}</option>`).join('')}
-                    </select>
-                    ${timeCellHTML(item.time)}
-                    <select class="sch-subject">
-                        <option value="">Seleccionar Materia</option>
-                        ${groupSubjects.length > 0
-                            ? groupSubjects.map(sub => `<option value="${esc(sub)}" ${item.subject === sub ? 'selected' : ''}>${esc(sub)}</option>`).join('')
-                            : `<option value="" disabled>Agrega materias al grupo primero</option>`
-                        }
-                    </select>
-                    <select class="sch-teacher">
-                        <option value="">Seleccionar Profesor</option>
-                        ${allTeachers.length > 0
-                            ? allTeachers.map(t => {
-                                const fullName = t.name || (t.nombre + ' ' + t.appPaterno);
-                                return `<option value="${esc(fullName)}" ${item.teacher === fullName ? 'selected' : ''}>${esc(fullName)}</option>`;
-                              }).join('')
-                            : `<option value="" disabled>No hay docentes registrados</option>`
-                        }
-                    </select>
-                    <button class="btn btn-danger" onclick="this.parentElement.remove()" style="padding: 0.5rem;">X</button>
-                </div>
-            `).join('');
+        // Materias del grupo seleccionado y lista de profesores (sin borrar lo que ya se eligió)
+        function refreshScheduleForm() {
+            const group = currentScheduleGroup();
+            const subjects = (groupsData[group] && groupsData[group].subjects) || [];
+            const teachers = allTeachers.map(t => t.name || (t.nombre + ' ' + t.appPaterno));
+            setOptions(el('schSubject'), subjects, subjects.length ? 'Seleccionar materia' : 'Agrega materias al grupo primero');
+            setOptions(el('schTeacher'), teachers, teachers.length ? 'Seleccionar profesor' : 'No hay docentes registrados');
         }
 
-        function addScheduleRow() {
-            const container = document.getElementById('scheduleRows');
-            const div = document.createElement('div');
-            div.className = "form-grid schedule-row";
-            div.style.cssText = "margin-bottom: 0.5rem; background: rgba(15, 23, 42, 0.4); padding: 0.5rem; border-radius: 8px; align-items: center;";
-
-            const days = ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'];
-            const currentGroup = document.getElementById('scheduleGroupSelect').value;
-            const groupSubjects = (groupsData[currentGroup] && groupsData[currentGroup].subjects) ? groupsData[currentGroup].subjects : [];
-
-            div.innerHTML = `
-                <select class="sch-day">
-                    ${days.map(d => `<option value="${d}">${d}</option>`).join('')}
-                </select>
-                ${timeCellHTML('')}
-                <select class="sch-subject">
-                    <option value="">Seleccionar Materia</option>
-                    ${groupSubjects.length > 0
-                        ? groupSubjects.map(sub => `<option value="${esc(sub)}">${esc(sub)}</option>`).join('')
-                        : `<option value="" disabled>Agrega materias al grupo primero</option>`
-                    }
-                </select>
-                <select class="sch-teacher">
-                    <option value="">Seleccionar Profesor</option>
-                    ${allTeachers.length > 0
-                        ? allTeachers.map(t => {
-                            const fullName = t.name || (t.nombre + ' ' + t.appPaterno);
-                            return `<option value="${esc(fullName)}">${esc(fullName)}</option>`;
-                          }).join('')
-                        : `<option value="" disabled>No hay docentes registrados</option>`
-                    }
-                </select>
-                <button class="btn btn-danger" onclick="this.parentElement.remove()" style="padding: 0.5rem;">X</button>
-            `;
-            container.appendChild(div);
+        function resetScheduleForm() {
+            editingOriginal = null;
+            document.querySelectorAll('#schDays input').forEach(i => { i.checked = false; });
+            el('schStart').value = '';
+            el('schEnd').value = '';
+            el('schSubject').value = '';
+            el('schTeacher').value = '';
+            el('schFormTitle').textContent = 'Agregar clase al horario';
+            el('schSaveBtn').textContent = 'Guardar clase';
+            el('schCancelBtn').style.display = 'none';
+            el('schMsg').textContent = '';
+            refreshScheduleForm();
         }
 
-        async function saveGroupSchedule() {
-            const group = document.getElementById('scheduleGroupSelect').value;
-            const rows = document.querySelectorAll('.schedule-row');
-            const schedule = [];
+        async function loadGroupSchedule() {
+            const group = currentScheduleGroup();
+            refreshScheduleForm();
+            if (!group) {
+                currentGroupSchedule = [];
+                renderWeek();
+                return;
+            }
+            try {
+                const res = await fetch(`/api/admin/schedules/${encodeURIComponent(group)}`);
+                const data = await res.json();
+                if (group !== currentScheduleGroup()) return;   // cambió de grupo mientras cargaba
+                currentGroupSchedule = sortSchedule(Array.isArray(data.schedule) ? data.schedule : []);
+                renderWeek();
+            } catch (e) {
+                console.error("Error al cargar horario", e);
+            }
+        }
 
-            rows.forEach(row => {
-                schedule.push({
-                    day: row.querySelector('.sch-day').value,
-                    time: getRowTime(row),
-                    subject: row.querySelector('.sch-subject').value,
-                    teacher: row.querySelector('.sch-teacher').value
-                });
-            });
+        // Vista semanal: una columna por día
+        function renderWeek() {
+            const group = currentScheduleGroup();
+            el('weekGroupName').textContent = group || '—';
+            el('weekCount').textContent = currentGroupSchedule.length;
 
-            if (schedule.some(s => !s.time || !s.subject)) {
-                alert('Completa la hora de inicio, la hora de fin y la materia en todas las filas.');
+            if (currentGroupSchedule.length === 0) {
+                el('weekGrid').innerHTML = `<p style="color: #94a3b8; grid-column: 1 / -1;">Este grupo aún no tiene clases. Usa el formulario de arriba para agregarlas.</p>`;
                 return;
             }
 
+            el('weekGrid').innerHTML = DAYS.map(day => {
+                const items = currentGroupSchedule.map((s, i) => ({ s, i })).filter(x => x.s.day === day);
+                return `
+                    <div class="day-col">
+                        <h5>${day}</h5>
+                        ${items.length ? items.map(({ s, i }) => `
+                            <div class="class-card">
+                                <div class="time">${esc(s.time)}</div>
+                                <div>${esc(s.subject)}</div>
+                                <div class="teacher">👨‍🏫 ${esc(s.teacher) || 'Sin profesor'}</div>
+                                <div class="actions">
+                                    <button class="btn" onclick="startEditScheduleEntry(${i})">Editar</button>
+                                    <button class="btn btn-danger" onclick="deleteScheduleEntry(${i})">Borrar</button>
+                                </div>
+                            </div>
+                        `).join('') : '<em style="font-size: 0.85rem; color: #64748b;">Sin clases</em>'}
+                    </div>`;
+            }).join('');
+        }
+
+        async function persistSchedule(group, list) {
             const res = await fetch('/api/admin/schedules', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ group, schedule })
+                body: JSON.stringify({ group, schedule: list })
             });
+            const data = await res.json().catch(() => ({}));
+            if (!data.success) {
+                alert(data.message || 'No se pudo guardar el horario.');
+                return false;
+            }
+            return true;
+        }
 
+        // Siempre parte del horario guardado en el servidor, para no pisar lo que ya existe
+        async function mutateSchedule(group, change) {
+            const res = await fetch(`/api/admin/schedules/${encodeURIComponent(group)}`);
+            if (!res.ok) throw new Error('No se pudo leer el horario actual. No se hizo ningún cambio.');
             const data = await res.json();
-            if (data.success) {
-                currentGroupSchedule = schedule;
-                updateSchedulePreviewDOM();
-                toggleSchedulePreview(true);
-                alert(`¡Horario del grupo ${group} guardado y actualizado con éxito!`);
-            } else {
-                alert(data.message || 'Error al guardar el horario.');
+            const updated = sortSchedule(change(Array.isArray(data.schedule) ? data.schedule : []));
+
+            if (!(await persistSchedule(group, updated))) return false;
+            if (group === currentScheduleGroup()) {
+                currentGroupSchedule = updated;
+                renderWeek();
             }
+            return true;
         }
 
-        function updateSchedulePreviewDOM() {
-            const group = document.getElementById('scheduleGroupSelect').value;
-            document.getElementById('previewGroupName').textContent = group;
-            const tbody = document.getElementById('previewScheduleBody');
+        async function saveScheduleEntry() {
+            const group = currentScheduleGroup();
+            const msg = el('schMsg');
+            if (!group) { alert('Primero crea un grupo en la pestaña "Grupos y Materias".'); return; }
 
-            if (currentGroupSchedule.length > 0) {
-                tbody.innerHTML = currentGroupSchedule.map(s => `
-                    <tr>
-                        <td><span style="padding: 0.2rem 0.5rem; background: rgba(56,189,248,0.2); border-radius: 4px; color: #38bdf8; font-weight: bold;">${esc(s.day) || 'N/A'}</span></td>
-                        <td><strong>${esc(s.time)}</strong></td>
-                        <td>${esc(s.subject)}</td>
-                        <td>${esc(s.teacher)}</td>
-                    </tr>
-                `).join('');
-            } else {
-                tbody.innerHTML = `<tr><td colspan="4" style="text-align: center; color: #94a3b8;">No hay materias configuradas en este horario.</td></tr>`;
-            }
-        }
+            const days = [...document.querySelectorAll('#schDays input:checked')].map(i => i.value);
+            const start = el('schStart').value;
+            const end = el('schEnd').value;
+            const subject = el('schSubject').value;
+            const teacher = el('schTeacher').value;
 
-        function toggleSchedulePreview(showPreview) {
-            const editor = document.getElementById('scheduleEditorContainer');
-            const preview = document.getElementById('schedulePreviewContainer');
+            if (!days.length) { alert('Marca al menos un día.'); return; }
+            if (!start || !end) { alert('Selecciona la hora de inicio y la de fin.'); return; }
+            if (end <= start) { alert('La hora de fin debe ser posterior a la de inicio.'); return; }
+            if (!subject) { alert('Selecciona la materia.'); return; }
 
-            if (showPreview) {
-                const rows = document.querySelectorAll('.schedule-row');
-                currentGroupSchedule = [];
-                rows.forEach(row => {
-                    currentGroupSchedule.push({
-                        day: row.querySelector('.sch-day').value,
-                        time: getRowTime(row),
-                        subject: row.querySelector('.sch-subject').value,
-                        teacher: row.querySelector('.sch-teacher').value
-                    });
+            const time = `${start} - ${end}`;
+            const btn = el('schSaveBtn');
+            btn.disabled = true;
+            msg.textContent = 'Guardando...';
+
+            try {
+                const ok = await mutateSchedule(group, list => {
+                    const base = editingOriginal ? list.filter(e => !sameEntry(e, editingOriginal)) : list;
+                    const added = [];
+                    for (const day of days) {
+                        const entry = { day, time, subject, teacher };
+                        const clash = findOverlap(base.concat(added), entry);
+                        if (clash) throw new Error(`Se empalma con otra clase del ${day}: ${clash.time} (${clash.subject}).`);
+                        added.push(entry);
+                    }
+                    return base.concat(added);
                 });
-                updateSchedulePreviewDOM();
+                if (ok) {
+                    resetScheduleForm();
+                    msg.textContent = `✔ Clase guardada (${days.length} ${days.length > 1 ? 'días' : 'día'}).`;
+                } else {
+                    msg.textContent = 'No se guardó.';
+                }
+            } catch (e) {
+                alert(e.message);
+                msg.textContent = 'No se guardó.';
+            } finally {
+                btn.disabled = false;
+            }
+        }
 
-                editor.style.display = 'none';
-                preview.style.display = 'block';
-            } else {
-                editor.style.display = 'block';
-                preview.style.display = 'none';
+        function startEditScheduleEntry(i) {
+            const entry = currentGroupSchedule[i];
+            if (!entry) return;
+            editingOriginal = { ...entry };
+
+            const { start, end } = parseTimeRange(entry.time);
+            document.querySelectorAll('#schDays input').forEach(box => { box.checked = (box.value === entry.day); });
+            el('schStart').value = start;
+            el('schEnd').value = end;
+            setOptions(el('schSubject'), [entry.subject], 'Seleccionar materia');
+            el('schSubject').value = entry.subject;
+            setOptions(el('schTeacher'), [entry.teacher].filter(Boolean), 'Seleccionar profesor');
+            el('schTeacher').value = entry.teacher || '';
+            refreshScheduleForm();
+
+            el('schFormTitle').textContent = 'Editar clase';
+            el('schSaveBtn').textContent = 'Actualizar clase';
+            el('schCancelBtn').style.display = 'inline-block';
+            el('schMsg').textContent = '';
+            el('schFormTitle').scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+
+        async function deleteScheduleEntry(i) {
+            const entry = currentGroupSchedule[i];
+            if (!entry) return;
+            if (!confirm(`¿Eliminar ${entry.subject} del ${entry.day} (${entry.time})?`)) return;
+            try {
+                await mutateSchedule(currentScheduleGroup(), list => list.filter(e => !sameEntry(e, entry)));
+                if (editingOriginal && sameEntry(editingOriginal, entry)) resetScheduleForm();
+            } catch (e) {
+                alert(e.message);
             }
         }
 
@@ -762,6 +834,7 @@
             document.getElementById('cancelEditBtn').style.display = 'none';
         }
 
+        initScheduleForm();
         loadData();
     </script>
 </body>
